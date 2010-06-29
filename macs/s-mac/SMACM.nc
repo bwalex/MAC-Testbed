@@ -501,7 +501,7 @@ implementation
       call Random.init();
       // initialize and start clock
       //call Clock.start();
-      call Timer.start(TIMER_REPEAT, 1); /* every 1ms, supposedly */
+      call Timer.start(TIMER_REPEAT, 2); /* every 2ms, supposedly */
       //initialize physical layer
       trace(DBG_USR1, "s-mac calling PhyControl.init() (1)\r\n");
       call PhyControl.init();
@@ -945,7 +945,8 @@ implementation
       if (manner == FORCE || (radioState == RADIO_IDLE && 
          srchNeighb == 0 && schedListen == 0)) {
 #endif
-         call PhyState.sleep();  // turn off the radio
+        /* XXX: */
+         //call PhyState.sleep();  // turn off the radio
 
          radioState = RADIO_SLEEP;
          state = SLEEP;

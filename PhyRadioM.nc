@@ -28,10 +28,11 @@ implementation
 {
 	/* PHY states */
 	enum {
-		STATE_STARTUP,
-		STATE_IDLE,
-		STATE_TRANSMITTING,
-		STATE_TRANSMITTING_WAIT,
+		STATE_STARTUP = 0,
+		STATE_IDLE, /* 1 */
+		STATE_TRANSMITTING, /* 2 */
+		STATE_TRANSMITTING_WAIT, /* 3 */
+		STATE_TRANSMITTING_DONE,
 		STATE_SLEEP,
 		STATE_DEEP_SLEEP
 	};
@@ -55,7 +56,7 @@ implementation
 #endif
 
 	uint8_t state;
-	uint8_t stateLock;
+	//uint8_t stateLock;
 	uint8_t flags;
 	uint8_t	lastPower;
 	uint16_t lastFreq;
@@ -112,7 +113,7 @@ implementation
 			lastPower = 31; /* Default to maximum power */
 			lastFreq = 2440; /* Default to frequency 2440 MHz */
 		}
-
+		trace(DBG_USR1, "Version 0.2 of PhyRadioM started, LOCAL_ADDR = %d\r\n", TOS_LOCAL_ADDRESS);
 		return call CC2420SplitControl.init();
 		/* call init in the underlying layers */
 	}
@@ -181,6 +182,7 @@ implementation
 
 	command result_t SplitControl.stop()
 	{
+		DBG_OUT(DBG_USR1, "SplitControl.stop() called!\r\n");
 		call SFD.disable();
 		call FIFOP.disable();
 		atomic {
@@ -204,6 +206,7 @@ implementation
 		atomic {
 			chkState = state;
 		}
+		DBG_OUT(DBG_USR1, "PhyState.idle() called\r\n");
 		/* If we are asked to return to idle from sleep, wake us up */
 		switch (chkState) {
 		case STATE_SLEEP:
@@ -223,6 +226,7 @@ implementation
 		 * the underlying stop will put us to sleep completely (including the
 		 * voltage regulator).
 		 */
+		DBG_OUT(DBG_USR1, "PhyState.sleep() called\r\n");
 		call SplitControl.stop();
 	}
 
@@ -230,6 +234,7 @@ implementation
 	
 	/* fail a transmit and notify the consumer */
 	inline void txFail(uint8_t *pkt) {
+		DBG_OUT(DBG_USR1, "txFail() started\r\n");
 		atomic {
 			state = STATE_IDLE;
 		}
@@ -242,6 +247,7 @@ implementation
 	 * consumer
 	 */
 	task void rxFail() {
+		DBG_OUT(DBG_USR1, "rxFail() started \r\n");
 		signal PhyComm.rxPktDone(rxBuf, 1);
 		atomic {
 			flags &= ~FLAG_RECV;
@@ -254,6 +260,7 @@ implementation
 	 * consumer.
 	 */
 	task void rxPktDone() {
+		DBG_OUT(DBG_USR1, "rxPktDone() started\r\n");
 		signal PhyComm.rxPktDone(rxBuf, 0);
 		atomic {
 			flags &= ~FLAG_RECV;
@@ -266,6 +273,7 @@ implementation
 	 * notify the consumer.
 	 */
 	task void txPktDone() {
+		DBG_OUT(DBG_USR1, "txPktDone() started\r\n");
 		signal PhyComm.txPktDone(txBuf, 0);
 		atomic {
 			state = STATE_IDLE;
@@ -391,8 +399,8 @@ implementation
 		 * If a transmit is already active, fail. We cannot handle simultaneous
 		 * sends.
 		 */
-		if (chkState == STATE_TRANSMITTING) {
-			DBG_OUT(DBG_USR1, "PhyComm.txPkt(): already in STATE_TRANSMITTING\r\n");
+		if ((chkState != STATE_IDLE) && (chkState != STATE_TRANSMITTING_DONE)) {
+			DBG_OUT(DBG_USR1, "PhyComm.txPkt(): not idle or tx_done, failing, but in state=%d\r\n", chkState);
 			return FAIL;
 		} else {
 			DBG_OUT(DBG_USR1, "PhyComm.txPkt(): going into STATE_TRANSMITTING\r\n");
@@ -442,7 +450,7 @@ implementation
 		 * Set radio into transmit mode so it starts transmitting the data in
 		 * the TXFIFO.
 		 */
-		call HPL.cmd(CC2420_STXON);
+		call HPL.cmd(CC2420_STXONCCA); /* XXX */
 
 		/*
 		 * Check the status byte. This is not strictly necessary when using
@@ -463,6 +471,7 @@ implementation
 			 * datasheet again anyways
 			 */
 			DBG_OUT(DBG_USR1, "TXFIFODone: enabling SFD, TX_ACTIVE set\r\n");
+			/* capture rising edge */
 			call SFD.enableCapture(TRUE);
 		} else {
 			DBG_OUT(DBG_USR1, "TXFIFODone: status no good, fail TX\r\n");
@@ -483,15 +492,17 @@ implementation
 	 * section on page 39 for more information
 	 * on TXFIFO underflow.
 	 *
+	 * in HPLCC2420M.nc, reactivate the code in CaptureSFD.enableCapture!!!
+	 *
 	 * Apart from that, the SFD interrupt also goes high when a packet is
 	 * inbound and the SFD has been reached.
 	 */		
 	async event result_t SFD.captured(uint16_t time) {
 		uint8_t chkState;
 
-		atomic {
-			chkState = state;
-		}
+	  atomic {
+		chkState = state;
+		
 		DBG_OUT(DBG_USR1, "SFD.captured(): called, chkState = %d\r\n", chkState);
 		switch (chkState) {
 		/*
@@ -501,7 +512,7 @@ implementation
 		case STATE_TRANSMITTING:
 			/* the SFD field has been completely transmitted */
 			DBG_OUT(DBG_USR1, "SFD.captured(): STATE_TRANSMITTING\r\n");
-			/* Make sure the SFD interupt is still enabled */
+			/* capture falling edge only */
 			call SFD.enableCapture(FALSE);
 			/*
 			 * Check if it also fell already again, notifying that the sent has
@@ -528,34 +539,56 @@ implementation
 			 * consumer.
 			 */
 			DBG_OUT(DBG_USR1, "SFD.captured(): STATE_TRANSMITTING_WAIT\r\n");
+			//atomic state = STATE_TRANSMITTING_DONE;
 			call SFD.disable();
-			call SFD.enableCapture(TRUE); /* recv SFD capture */
+			atomic state = STATE_TRANSMITTING_DONE;
+			/* capture rising edge only */
+			//call SFD.enableCapture(TRUE); /* recv SFD capture */
 			/*
 			 * Try and notify the consumer via a task. If not possible, signal
 			 * directly.
 			 * We are put back into idle state either after signalling directly
 			 * or by the txPktDone() task after it notifies the consumer.
 			 */
-			//if ((post txPktDone()) == FAIL) {
+			if ((post txPktDone()) == FAIL) {
 				DBG_OUT(DBG_USR1, "SFD.captured(): post txPktDone() failed\r\n");
 				signal PhyComm.txPktDone(txBuf, 0);
 				atomic {
 					state = STATE_IDLE;
 				}
-			//}
-			break;
-
-		default:
+			}
+			if (!TOSH_READ_CC_SFD_PIN()) {
+				/*
+				 * if the SFD is still low, we finish here, otherwise there was
+				 * another interrupt.
+				 */
+				call SFD.enableCapture(TRUE);
+				break;
+			}
+			DBG_OUT(DBG_USR1, "SFD.captured(): FALLTHROUGH after setting TXDONE state\r\n");
+			/* FALLTHROUGH when SFD is high again */
+		default: /* XXX: this should be default: */
 			/*
 			 * No transmit is active, so the SFD signals the detection of the
 			 * SFD frame in the incoming packet. Notify the user that we are
 			 * about to receive a packet.
 			 */
+#if 0
+			DBG_OUT(DBG_USR1, "SFD.captured(): NOOOOOOOOOOT calling startSymDetected on rxBuf\r\n");
+#else
 			DBG_OUT(DBG_USR1, "SFD.captured(): call startSymDetected on rxBuf\r\n");
 			signal PhyComm.startSymDetected(rxBuf); 
+#endif
+			/*
+			 * XXX: Ok, here is the big problem: whenever we send, we get called
+			 * again (SFD.captured() in state TRANSMITTING_DONE. No idea why,
+			 * but it's not an RX SFD interrupt.
+			 */
+			call SFD.enableCapture(TRUE);
 			break;
+		//default:
 		}
-
+	  }
 		return SUCCESS;
 	}
 
@@ -569,7 +602,6 @@ implementation
 		if (!TOSH_READ_CC_FIFO_PIN()) { /* OVERFLOW */
 			DBG_OUT(DBG_USR1, "FIFOP.fired(): flushRXFIFO !\r\n");
 			flushRXFIFO();
-			/* XXX: possibly post the rxFail task, but not sure yet */
 			if (!post rxFail()) {
 				signal PhyComm.rxPktDone(rxBuf, 1);
 				atomic {
@@ -579,10 +611,17 @@ implementation
 			return SUCCESS;
 		}
 
+#if 0
+		/* XXX: this SHOULD NOT BE HERE!!!!!!!!!!!!!!!!!!!!!!!! */
+		signal PhyComm.startSymDetected(rxBuf);
+		/* XXX: the above line REALLY SHOULD NOT BE HERE !!!!! */
+#endif
+
 		/*
 		 * Start receiving a packet in the separate task we got for this. If
 		 * it's not possible, flush the RXFIFO and forget about it.
 		 */
+		
 		if (post rxPkt()) {
 			DBG_OUT(DBG_USR1, "FIFOP.fired(): rxPkt posted, disable FIFOP\r\n");
 			call FIFOP.disable();
@@ -627,6 +666,7 @@ implementation
 		/* XXX: possibly signal error to upper layer */
 		/* packet isn't of the right size, flush RXFIFO and end recv */
 		if ((length < PHY_MIN_PKT_LEN) || (length > PHY_MAX_PKT_LEN)) {
+			DBG_OUT(DBG_USR1, "length in RXFIFODone() is invalid, failing...\r\n");
 			if (!post rxFail()) {
 				signal PhyComm.rxPktDone(rxBuf, 1);
 				atomic {
@@ -713,12 +753,13 @@ implementation
 			flags |= FLAG_CCA;
 		}
 
+		DBG_OUT(DBG_USR1, "CarrierSense.start() - 1\r\n");
 		if (TOSH_READ_RADIO_CCA_PIN()) {
 			signal CarrierSense.channelIdle();
 		} else {
 			signal CarrierSense.channelBusy();
 		}
-
+		DBG_OUT(DBG_USR1, "CarrierSense.start() - 2 (done)\r\n");
 		atomic {
 			flags &= ~FLAG_CCA;
 		}
@@ -727,7 +768,7 @@ implementation
 	}
 
 	/*
-	 * Set the treshold of the CCA decision. Refer to the datasheet for
+	 * Set the threshold of the CCA decision. Refer to the datasheet for
 	 * information on the threshold setting. It supposedly is in dBm.
 	 */
 	command result_t CarrierSense.setThreshold(int8_t thr)
