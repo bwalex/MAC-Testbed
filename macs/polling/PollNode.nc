@@ -8,16 +8,17 @@ configuration PollNode
 
 implementation
 {
-   components PollNodeM, PhyRadio, RandomLFSR, SingleTimer;
+   components PollNodeM, PhyRadio, RandomLFSR, SingleTimer, LedsC;
   
    SplitControl = PollNodeM;
-   PollHeadComm = PollNodeM;
+   PollNodeComm = PollNodeM;
    
    // wiring to lower layers
    
    PollNodeM.PhyControl -> PhyRadio;
    PollNodeM.PhyState -> PhyRadio;
-   PollNodeM.CarrierSense -> PhyRadio;
+   //PollNodeM.CarrierSense -> PhyRadio;
    PollNodeM.PhyComm -> PhyRadio;
    PollNodeM.Timer -> SingleTimer.Timer;
+   PollNodeM.Leds -> LedsC;
 }

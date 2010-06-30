@@ -33,7 +33,7 @@ module PollNodeM
 	uses {
 		interface SplitControl as PhyControl;
 		interface PhyState;
-		interface CarrierSense;
+		//interface CarrierSense;
 		interface PhyComm;
 		interface Timer;
 		interface Leds;
@@ -71,13 +71,18 @@ implementation
 
 	void wakeup()
 	{
+		uint8_t ret = 0;
 		atomic {
 			if (radioState != RADIO_SLEEP)
-				return;
+				ret = 1;
 		}
+
+		if (ret)
+			return;
+		
 		atomic state = STATE_WAKEUP;
 		
-		PhyComm.idle();
+		call PhyState.idle();
 	}
 
 	void sleep(uint16_t ms)
@@ -93,6 +98,7 @@ implementation
 	event result_t Timer.fired()
 	{
 		wakeup();
+		return SUCCESS;
 	}
 
 	event result_t PhyControl.startDone()
@@ -158,12 +164,12 @@ implementation
 		return SUCCESS;
 	}
 
-	default event result_t PollNodeComm.dataRequested()
+	default event result_t PollNodeComm.dataRequested(void *data)
 	{
 		return SUCCESS;
 	}
 
-	default event result_t PollNodeComm.ackReceived()
+	default event result_t PollNodeComm.ackReceived(void *data)
 	{
 		return SUCCESS;
 	}
@@ -182,38 +188,34 @@ implementation
 			return FAIL;
 
 		atomic {
-			txPkt = data;
+			pkt = data;
 			pkt_len = length;
 		}
 
-		if (call PhyComm.txPkt(txPkt, pkt_len) == FAIL)
+		if (call PhyComm.txPkt(pkt, pkt_len) == FAIL)
 			return FAIL;
 		else {
 			atomic state = STATE_DATA_TX;
 		}
 	}
 
-	event result_t PhyComm.startSymDetected()
+	event result_t PhyComm.startSymDetected(void *data)
 	{
 		return SUCCESS;
 	}
 
-	event result_t PhyComm.txPktDone()
-	{
-	}
-
-	event result_t PhyComm.rxPktDone(void *data, uint8_t error)
+	event void* PhyComm.rxPktDone(void *data, uint8_t error)
 	{
 		uint8_t chkState;
 		atomic chkState = state;
 
 		if (error)
-			return SUCCESS;
+			return data;
 	
 		atomic rxPkt = data;
 
 		if ((rxPkt->node_id != TOS_LOCAL_ADDRESS) && (rxPkt->node_id != POLL_BROADCAST_ID))
-			return SUCCESS;
+			return data;
 
 		if (chkState == STATE_IDLE) {
 			switch(rxPkt->type) {
@@ -228,12 +230,12 @@ implementation
 			}
 		} else if (chkState == STATE_WAIT_ACK) {
 			if (rxPkt->type != POLL_ACK)
-				return SUCCESS;
+				return data;
 			else
-				PollNodeComm.ackReceived(data);
+				signal PollNodeComm.ackReceived(data);
 		}
 
-		return SUCCESS;
+		return data;
 	}
 
 
@@ -244,9 +246,9 @@ implementation
 			case STATE_DATA_TX:
 				if (error) {
 					/* XXX: retry first? */
-					signal PollNodeComm.dataTxFailed(data);
+					signal PollNodeComm.dataTxFailed();
 				} else {
-					atomic state = STATE_DATA_WAIT;
+					atomic state = STATE_WAIT_ACK;
 				}
 				break;
 			default:
@@ -255,8 +257,4 @@ implementation
 		return SUCCESS;
 	}
 
-	event result_t PhyComm.startSymDetected(void *data)
-	{
-		return SUCCESS;
-	}
 }

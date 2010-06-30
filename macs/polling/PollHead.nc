@@ -17,7 +17,7 @@ implementation
    
    PollHeadM.PhyControl -> PhyRadio;
    PollHeadM.PhyState -> PhyRadio;
-   PollHeadM.CarrierSense -> PhyRadio;
+   //PollHeadM.CarrierSense -> PhyRadio;
    PollHeadM.PhyComm -> PhyRadio;
-   PollHeadM.Timer -> SingleTimer.Timer;
+   //PollHeadM.Timer -> SingleTimer.Timer;
 }

@@ -35,11 +35,12 @@
 #define POLL_ACK		5
 #define POLL_PRESENT	6
 
+#include "PhyRadioMsg.h"
 
 typedef struct {
    PhyHeader phyHdr;
    char type;
-   uint16_t node_id;
+   uint8_t node_id;
    uint16_t sleep_ms;
 } __attribute__((packed)) MACHeader;
 

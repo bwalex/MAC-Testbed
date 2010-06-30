@@ -33,9 +33,9 @@ module PollHeadM
 	uses {
 		interface SplitControl as PhyControl;
 		interface PhyState;
-		interface CarrierSense;
+		//interface CarrierSense;
 		interface PhyComm;
-		interface Timer;
+		//interface Timer;
 	}
 }
 
@@ -72,37 +72,40 @@ implementation
 
 	void wakeup()
 	{
+		uint8_t ret = 0;
 		atomic {
 			if (radioState != RADIO_SLEEP)
-				return;
+				ret = 1;
 		}
 
-		PhyComm.idle();
+		if (ret)
+			return;
+		call PhyState.idle();
 	}
 
-	default event result_t PollHeadComm.requestDataDone(uint8_t id, void *data, int error)
+	default event result_t PollHeadComm.requestDataDone(uint8_t id, void *data, uint8_t error)
 	{
 		return SUCCESS;
 	}
 
 	task void rqDataFail()
 	{
-		signal PollHeadComm.requestDataDone(rxPkt->node_id, rxPkt, 1);
+		signal PollHeadComm.requestDataDone(rxPkt->node_id, (void *)rxPkt, 1);
 		atomic state = STATE_IDLE;
 	}
 
 	task void rqDataDone()
 	{
-		signal PollHeadComm.requestDataDone(rxPkt->node_id, rxPkt, 0);
+		signal PollHeadComm.requestDataDone(rxPkt->node_id, (void *)rxPkt, 0);
 		atomic state = STATE_IDLE;
 	}
 
 	task void sendAck()
 	{
-		atomic txPkt->node_id = node_id;
-		txPkt->type = POLL_ACK;
+		atomic txPkt.node_id = node_id;
+		atomic txPkt.type = POLL_ACK;
 
-		if ((call PhyComm.txPkt(txPkt, sizeof(txPkt))) == FAIL)
+		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL)
 			post rqDataFail();
 
 		return;
@@ -110,17 +113,22 @@ implementation
 
 	event result_t PhyControl.startDone()
 	{
+		uint8_t chkState;
+
 		atomic {
-			radioState = RADIO_IDLE;
-			switch (state) {
-			case STATE_REQ_TX:
-				if (PhyComm.txPkt(pkt, pkt_len) == FAIL)
-					post rqDataFail();
-				return SUCCESS;
-				/* NOTREACHED */
-			default:
-				signal SplitControl.startDone();
-			}
+			chkState = state;
+		}
+
+		atomic radioState = RADIO_IDLE;
+			
+		switch (chkState) {
+		case STATE_REQ_TX:
+			if (call PhyComm.txPkt(pkt, pkt_len) == FAIL)
+				post rqDataFail();
+			return SUCCESS;
+			/* NOTREACHED */
+		default:
+			signal SplitControl.startDone();
 		}
 		return SUCCESS;
 	}
@@ -161,17 +169,21 @@ implementation
 		return call PhyControl.stop();
 	}
 
-	command result_t SplitControl.stopDone()
+	event result_t PhyControl.stopDone()
 	{
 		atomic radioState = STATE_SLEEP;
 		signal SplitControl.stopDone();
 		return SUCCESS;
 	}
 
+	default event result_t SplitControl.stopDone()
+	{
+		return SUCCESS;
+	}
+
 	command result_t PollHeadComm.requestData(uint8_t u_node_id, void *data, uint8_t length)
 	{
 		uint8_t chkState;
-		PollMsg *pMsg;
 
 		if ((chkState != STATE_IDLE) && (chkState != STATE_SLEEP))
 			return FAIL;
@@ -189,7 +201,7 @@ implementation
 		}
 
 		atomic state = STATE_REQ_TX;
-		return PhyComm.txPkt(pkt, pkt_len);
+		return call PhyComm.txPkt(pkt, pkt_len);
 	}
 
 	event result_t PhyComm.txPktDone(void *data, uint8_t error)
@@ -223,23 +235,23 @@ implementation
 		return SUCCESS;
 	}
 
-	event result_t PhyComm.rxPktDone(void *data, uint8_t error)
+	event void *PhyComm.rxPktDone(void *data, uint8_t error)
 	{
 		uint8_t chkState;
 
 		atomic chkState = state;
 
 		if ((chkState != STATE_DATA_WAIT) && (chkState != STATE_DISCOVERY_WAIT))
-			return SUCCESS;
+			return data;
 		
 		rxPkt = data;
 		if ((chkState == STATE_DATA_WAIT) && ((rxPkt->type != POLL_DATA) || (error))) {
-			post rqDataFail;
-			return SUCCESS;
+			post rqDataFail();
+			return data;
 		}
 
 		if ((chkState == STATE_DATA_WAIT) && (rxPkt->node_id != node_id))
-			return SUCCESS;
+			return data;
 
 		switch (rxPkt->type) {
 		case POLL_DATA:
@@ -258,6 +270,6 @@ implementation
 		default:
 		}
 
-		return SUCCESS:
+		return data;
 	}
 }
