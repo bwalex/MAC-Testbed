@@ -28,7 +28,7 @@
 #define POLL_MSG
 
 #define POLL_BROADCAST_ID	255
-#define POLL_ADV_SLEEP	1
+#define POLL_BEACON	1
 #define POLL_REQ		2
 #define POLL_DATA		3
 #define POLL_SCAN		4
@@ -40,10 +40,14 @@
 typedef struct {
    PhyHeader phyHdr;
    char type;
-   uint8_t node_id;
-   uint16_t sleep_ms;
+   uint16_t node_id;
 } __attribute__((packed)) MACHeader;
 
+typedef struct {
+  MACHeader hdr;
+  uint32_t sleep_jf;
+  int16_t crc;
+} __attribute__((packed)) MACPkt;
 
 typedef struct {
 	MACHeader hdr;   // include lower-layer header first

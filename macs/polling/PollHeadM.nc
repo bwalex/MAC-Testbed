@@ -35,13 +35,14 @@ module PollHeadM
 		interface PhyState;
 		//interface CarrierSense;
 		interface PhyComm;
-		//interface Timer;
+		interface Timer as BeaconTimer;
 	}
 }
 
 implementation
 {
 #include "PollMsg.h"
+#define BEACON_INTERVAL	5500 /* every 5.5s */
 
 	enum {
 		STATE_SLEEP,
@@ -61,10 +62,12 @@ implementation
 		RADIO_TX
 	};
 
+	uint32_t timestamp;
+	uint32_t sleep_interval;
 	uint8_t state;
 	uint8_t radioState;
 	uint8_t	flags;
-	MACHeader txPkt;
+	MACPkt txPkt;
 	MACHeader *pkt;
 	MACHeader *rxPkt;
 	uint8_t pkt_len;
@@ -102,13 +105,57 @@ implementation
 
 	task void sendAck()
 	{
-		atomic txPkt.node_id = node_id;
-		atomic txPkt.type = POLL_ACK;
+		MACHeader *mh;
+
+		atomic mh = (MACHeader *)&txPkt;
+		atomic mh->node_id = node_id;
+		atomic mh->type = POLL_ACK;
 
 		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL)
 			post rqDataFail();
 
 		return;
+	}
+
+	void sendBeacon()
+	{
+		MACHeader *mh;
+		MACPkt	*mp;
+
+		trace(DBG_USR1, "beacon timer fired, sending beacon\r\n");
+
+		atomic {
+			mh = (MACHeader *)&txPkt;
+			mp = (MACPkt *)&txPkt;
+			mh->node_id = POLL_BROADCAST_ID;
+			mh->type = POLL_BEACON;
+			mp->sleep_jf = sleep_interval;
+		}
+		
+
+		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL)
+			trace(DBG_USR1, "Failed to send beacon :(\r\n");
+
+		return;
+	}
+
+	task void sendBeaconTask()
+	{
+		sendBeacon();
+	}
+
+	event result_t BeaconTimer.fired()
+	{
+		if ((post sendBeaconTask()) == FAIL)
+			sendBeacon();
+
+		return SUCCESS;
+	}
+
+	command result_t PollHeadComm.setSleepInterval(uint32_t sleep_jiffies)
+	{
+		atomic sleep_interval = sleep_jiffies;
+		return SUCCESS;
 	}
 
 	event result_t PhyControl.startDone()
@@ -129,6 +176,8 @@ implementation
 			/* NOTREACHED */
 		default:
 			signal SplitControl.startDone();
+			atomic state = STATE_IDLE;
+			call BeaconTimer.start(TIMER_REPEAT, BEACON_INTERVAL);
 		}
 		return SUCCESS;
 	}
@@ -171,7 +220,7 @@ implementation
 
 	event result_t PhyControl.stopDone()
 	{
-		atomic radioState = STATE_SLEEP;
+		atomic radioState = RADIO_SLEEP;
 		signal SplitControl.stopDone();
 		return SUCCESS;
 	}
@@ -181,12 +230,23 @@ implementation
 		return SUCCESS;
 	}
 
+	command result_t PollHeadComm.cancelRequest()
+	{
+		atomic node_id = 254;
+		atomic state = STATE_IDLE;
+		return SUCCESS;
+	}
+
 	command result_t PollHeadComm.requestData(uint8_t u_node_id, void *data, uint8_t length)
 	{
 		uint8_t chkState;
 
-		if ((chkState != STATE_IDLE) && (chkState != STATE_SLEEP))
+		atomic chkState = state;
+
+		if ((chkState != STATE_IDLE) && (chkState != STATE_SLEEP)) {
+			trace(DBG_USR1, "chkState = %d, hence failing\r\n", chkState);
 			return FAIL;
+		}
 
 		pkt = data;
 		pkt_len = length;
@@ -240,6 +300,9 @@ implementation
 		uint8_t chkState;
 
 		atomic chkState = state;
+
+		if (node_id == 254)
+			return data;
 
 		if ((chkState != STATE_DATA_WAIT) && (chkState != STATE_DISCOVERY_WAIT))
 			return data;

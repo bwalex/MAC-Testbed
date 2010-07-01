@@ -8,7 +8,7 @@ configuration PollHead
 
 implementation
 {
-   components PollHeadM, PhyRadio, RandomLFSR, SingleTimer;
+   components PollHeadM, PhyRadio, RandomLFSR, TimerC;
   
    SplitControl = PollHeadM;
    PollHeadComm = PollHeadM;
@@ -19,5 +19,5 @@ implementation
    PollHeadM.PhyState -> PhyRadio;
    //PollHeadM.CarrierSense -> PhyRadio;
    PollHeadM.PhyComm -> PhyRadio;
-   //PollHeadM.Timer -> SingleTimer.Timer;
+   PollHeadM.BeaconTimer -> TimerC.Timer[unique("Timer")];
 }
