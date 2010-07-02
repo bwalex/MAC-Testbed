@@ -8,7 +8,7 @@ configuration PollNode
 
 implementation
 {
-   components PollNodeM, PhyRadio, RandomLFSR, TimerC, LedsC, SysTimeC;
+   components PollNodeM, PhyRadio, RandomLFSR, TimerC, LedsC, PrecisionTimerC;
   
    SplitControl = PollNodeM;
    PollNodeComm = PollNodeM;
@@ -21,6 +21,6 @@ implementation
    PollNodeM.PhyComm -> PhyRadio;
    PollNodeM.WakeupTimer -> TimerC.Timer[unique("Timer")];
    PollNodeM.Leds -> LedsC;
-   PollNodeM.Timestamp -> SysTimeC;
-   PollNodeM.TSControl -> SysTimeC.StdControl;
+   PollNodeM.Timestamp -> PrecisionTimerC.PrecisionTimer[1];
+   PollNodeM.TSControl -> PrecisionTimerC.StdControl;
 }

@@ -32,6 +32,7 @@ interface PhyComm
 {
    // packet transmission
    command result_t txPkt(void* packet, uint8_t length);
+   command result_t reTxPkt();
    event result_t txPktDone(void* packet, uint8_t error);
    
    // packet reception

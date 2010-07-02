@@ -34,13 +34,15 @@
 #define POLL_SCAN		4
 #define POLL_ACK		5
 #define POLL_PRESENT	6
+#define POLL_SAMPLE 7
 
 #include "PhyRadioMsg.h"
 
 typedef struct {
    PhyHeader phyHdr;
    char type;
-   uint16_t node_id;
+   uint16_t src_id;
+   uint16_t dest_id;
 } __attribute__((packed)) MACHeader;
 
 typedef struct {
@@ -53,7 +55,8 @@ typedef struct {
 	MACHeader hdr;   // include lower-layer header first
 } AppHeader;
 
-#define APP_PAYLOAD_LEN (100 - sizeof(AppHeader) - 2)
+//#define APP_PAYLOAD_LEN (100 - sizeof(AppHeader) - 2)
+#define APP_PAYLOAD_LEN   44
 
 typedef struct {
 	AppHeader hdr;

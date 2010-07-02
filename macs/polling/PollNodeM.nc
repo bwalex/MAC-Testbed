@@ -37,7 +37,7 @@ module PollNodeM
 		interface PhyComm;
 		interface Timer as WakeupTimer;
 		interface Leds;
-		interface SysTime64 as Timestamp;
+		interface PrecisionTimer as Timestamp;
 		interface StdControl as TSControl;
 	}
 }
@@ -72,6 +72,7 @@ implementation
 	MACHeader *rxPkt;
 	uint8_t pkt_len;
 	uint8_t node_id;
+	uint8_t head_id;
 
 	void wakeup()
 	{
@@ -229,7 +230,8 @@ implementation
 			pkt = data;
 			pkt_len = length;
 		}
-		pkt->node_id = TOS_LOCAL_ADDRESS;
+		pkt->src_id = TOS_LOCAL_ADDRESS;
+		atomic pkt->dest_id = head_id;
 		pkt->type = POLL_DATA;
 		atomic state = STATE_DATA_TX;
 
@@ -258,8 +260,8 @@ implementation
 		 * PFLAGS+=-DMY_ADDRESS=N make imote2  (to set
 		 * TOS_LOCAL_ADDRESS)
 		 */
-		trace(DBG_USR1, "rxPktDone() marker 1, TOS_LOCAL_ADDRESS = %d, node_id = %d, pkt_type = %d\r\n", TOS_LOCAL_ADDRESS, rxPkt->node_id, rxPkt->type);
-		if ((rxPkt->node_id != TOS_LOCAL_ADDRESS) && (rxPkt->node_id != POLL_BROADCAST_ID))
+		trace(DBG_USR1, "rxPktDone() marker 1, TOS_LOCAL_ADDRESS = %d, dest_id = %d, src_id = %d, pkt_type = %d\r\n", TOS_LOCAL_ADDRESS, rxPkt->dest_id, rxPkt->src_id, rxPkt->type);
+		if ((rxPkt->dest_id != TOS_LOCAL_ADDRESS) && (rxPkt->dest_id != POLL_BROADCAST_ID))
 			return data;
 		trace(DBG_USR1, "rxPktDone() marker 2, chkState = %d\r\n", chkState);
 
@@ -277,6 +279,7 @@ implementation
 			case POLL_REQ:
 				trace(DBG_USR1, "rxPktDone() marker 4\r\n");
 				atomic state = STATE_DATA_REQ;
+				atomic head_id = rxPkt->src_id;
 				signal PollNodeComm.dataRequested(data);
 				break;
 			default:

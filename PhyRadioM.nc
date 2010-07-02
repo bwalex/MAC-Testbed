@@ -47,7 +47,7 @@ implementation
  * Comment this out if you don't want debug information to be printed over the
  * serial port. Keep in mind that debug prints have a major overhead.
  */
-#define PHYRADIO_DEBUG
+//#define PHYRADIO_DEBUG
 
 #ifdef PHYRADIO_DEBUG
  #define DBG_OUT		trace
@@ -381,6 +381,56 @@ implementation
 		flushRXFIFO(); 
 	}
 
+	void sendpkt()
+	{
+		uint8_t status;
+
+		DBG_OUT(DBG_USR1, "sendpkt(): going into TXON mode (STXON)\r\n");
+		/* If necessary, return radio to good state by flushing RXFIFO */
+		if ((!TOSH_READ_CC_FIFO_PIN() && !TOSH_READ_CC_FIFOP_PIN())) {
+			DBG_OUT(DBG_USR1, "sendpkt(): flushRXFIFO() again\r\n");
+			flushRXFIFO();
+		}
+
+		/*
+		 * Set radio into transmit mode so it starts transmitting the data in
+		 * the TXFIFO.
+		 */
+		call HPL.cmd(CC2420_STXON); /* XXX */
+
+		/*
+		 * Check the status byte. This is not strictly necessary when using
+		 * STXON instead of STXONCCA, but we do it anyways, just to make sure
+		 * the send is really active and no TX FIFO underflow occured.
+		 */
+		status = call HPL.cmd(CC2420_SNOP);
+		DBG_OUT(DBG_USR1, "sendpkt(): status from CC2420_SNOP = %d\r\n", status);
+		if ((status >> CC2420_TX_UNDERFLOW) & 0x01) {
+			DBG_OUT(DBG_USR1, "sendpkt(): tx fifo underflow, flushing and failing\r\n");
+			call HPL.cmd(CC2420_SFLUSHTX);
+			txFail(txBuf);
+			return;
+		}
+		if ((status >> CC2420_TX_ACTIVE) & 0x01) {
+			/*
+			 * XXX: enable SFD capture to see when send finishes... check
+			 * datasheet again anyways
+			 */
+			DBG_OUT(DBG_USR1, "sendpkt(): enabling SFD, TX_ACTIVE set\r\n");
+			/* capture rising edge */
+			call SFD.enableCapture(TRUE);
+		} else {
+			DBG_OUT(DBG_USR1, "sendpkt(): status no good, fail TX\r\n");
+			txFail(txBuf);
+		}
+	
+	}
+
+	command result_t PhyComm.reTxPkt()
+	{
+		sendpkt();
+	}
+
 	/* Command to transmit a single packet */
 	command result_t PhyComm.txPkt(void *pkt, uint8_t pkt_sz)
 	{
@@ -438,46 +488,7 @@ implementation
 	 * just need to make sure no overflow occured and then send the packet.
 	 */
 	async event result_t FIFO.TXFIFODone(uint8_t length, uint8_t *data) {
-		uint8_t status;
-		DBG_OUT(DBG_USR1, "TXFIFODone: going into TXON mode (STXON)\r\n");
-		/* If necessary, return radio to good state by flushing RXFIFO */
-		if ((!TOSH_READ_CC_FIFO_PIN() && !TOSH_READ_CC_FIFOP_PIN())) {
-			DBG_OUT(DBG_USR1, "TXFIFODone: flushRXFIFO() again\r\n");
-			flushRXFIFO();
-		}
-
-		/*
-		 * Set radio into transmit mode so it starts transmitting the data in
-		 * the TXFIFO.
-		 */
-		call HPL.cmd(CC2420_STXONCCA); /* XXX */
-
-		/*
-		 * Check the status byte. This is not strictly necessary when using
-		 * STXON instead of STXONCCA, but we do it anyways, just to make sure
-		 * the send is really active and no TX FIFO underflow occured.
-		 */
-		status = call HPL.cmd(CC2420_SNOP);
-		DBG_OUT(DBG_USR1, "TXFIFODone: status from CC2420_SNOP = %d\r\n", status);
-		if ((status >> CC2420_TX_UNDERFLOW) & 0x01) {
-			DBG_OUT(DBG_USR1, "TXFIFODone: tx fifo underflow, flushing and failing\r\n");
-			call HPL.cmd(CC2420_SFLUSHTX);
-			txFail(data);
-			return SUCCESS;
-		}
-		if ((status >> CC2420_TX_ACTIVE) & 0x01) {
-			/*
-			 * XXX: enable SFD capture to see when send finishes... check
-			 * datasheet again anyways
-			 */
-			DBG_OUT(DBG_USR1, "TXFIFODone: enabling SFD, TX_ACTIVE set\r\n");
-			/* capture rising edge */
-			call SFD.enableCapture(TRUE);
-		} else {
-			DBG_OUT(DBG_USR1, "TXFIFODone: status no good, fail TX\r\n");
-			txFail(data);
-		}
-		//STATE_UNLOCK();
+		sendpkt();
 		return SUCCESS;
 	}
 

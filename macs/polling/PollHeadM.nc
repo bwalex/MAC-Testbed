@@ -93,13 +93,13 @@ implementation
 
 	task void rqDataFail()
 	{
-		signal PollHeadComm.requestDataDone(rxPkt->node_id, (void *)rxPkt, 1);
+		signal PollHeadComm.requestDataDone(rxPkt->src_id, (void *)rxPkt, 1);
 		atomic state = STATE_IDLE;
 	}
 
 	task void rqDataDone()
 	{
-		signal PollHeadComm.requestDataDone(rxPkt->node_id, (void *)rxPkt, 0);
+		signal PollHeadComm.requestDataDone(rxPkt->src_id, (void *)rxPkt, 0);
 		atomic state = STATE_IDLE;
 	}
 
@@ -108,7 +108,8 @@ implementation
 		MACHeader *mh;
 
 		atomic mh = (MACHeader *)&txPkt;
-		atomic mh->node_id = node_id;
+		atomic mh->dest_id = node_id;
+		atomic mh->src_id = TOS_LOCAL_ADDRESS;
 		atomic mh->type = POLL_ACK;
 
 		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL)
@@ -127,7 +128,8 @@ implementation
 		atomic {
 			mh = (MACHeader *)&txPkt;
 			mp = (MACPkt *)&txPkt;
-			mh->node_id = POLL_BROADCAST_ID;
+			mh->dest_id = POLL_BROADCAST_ID;
+			mh->src_id = TOS_LOCAL_ADDRESS;
 			mh->type = POLL_BEACON;
 			mp->sleep_jf = sleep_interval;
 		}
@@ -138,6 +140,28 @@ implementation
 
 		return;
 	}
+
+	command result_t PollHeadComm.sendSampleStart()
+	{
+		MACHeader *mh;
+		MACPkt	*mp;
+
+		trace(DBG_USR1, "beacon timer fired, sending beacon\r\n");
+
+		atomic {
+			mh = (MACHeader *)&txPkt;
+			mp = (MACPkt *)&txPkt;
+			mh->dest_id = POLL_BROADCAST_ID;
+			mh->src_id = TOS_LOCAL_ADDRESS;
+			mh->type = POLL_SAMPLE;
+		}
+	
+		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL)
+			trace(DBG_USR1, "Failed to send beacon :(\r\n");
+
+		return SUCCESS;
+	}
+
 
 	task void sendBeaconTask()
 	{
@@ -250,7 +274,8 @@ implementation
 
 		pkt = data;
 		pkt_len = length;
-		pkt->node_id = u_node_id;
+		pkt->dest_id = u_node_id;
+		pkt->src_id = TOS_LOCAL_ADDRESS;
 		pkt->type = POLL_REQ;
 		atomic node_id = u_node_id;
 
@@ -285,6 +310,9 @@ implementation
 				break;
 
 			default:
+				trace(DBG_USR1, "sendSampleStartDone() assumed in txPktDone.\r\n");
+				signal PollHeadComm.sendSampleStartDone();
+				break;
 			}
 		}
 		return SUCCESS;
@@ -313,7 +341,7 @@ implementation
 			return data;
 		}
 
-		if ((chkState == STATE_DATA_WAIT) && (rxPkt->node_id != node_id))
+		if ((chkState == STATE_DATA_WAIT) && (rxPkt->src_id != node_id))
 			return data;
 
 		switch (rxPkt->type) {
