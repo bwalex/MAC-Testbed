@@ -71,8 +71,8 @@ implementation
 	MACHeader *pkt;
 	MACHeader *rxPkt;
 	uint8_t pkt_len;
-	uint8_t node_id;
-	uint8_t head_id;
+	uint16_t node_id;
+	uint16_t head_id;
 
 	/*
 	 * We are supposed to wakeup. Get the current timestamp and see how long
@@ -83,7 +83,7 @@ implementation
 		uint32_t now_ts;
 		uint8_t ret = 0;
 		now_ts = call Timestamp.getTime32();
-		trace(DBG_USR1, "Timer fired (precision): Timestamp difference: %d\r\n", now_ts - timestamp);
+		//trace(DBG_USR1, "Timer fired (precision): Timestamp difference: %d\r\n", now_ts - timestamp);
 		atomic {
 			if (radioState != RADIO_SLEEP) {
 				trace(DBG_USR1, "wakeup() called, but radioState != RADIO_SLEEP, = %d\r\n", radioState);
@@ -122,7 +122,7 @@ implementation
 		call WakeupTimer.start(TIMER_ONE_SHOT, ms - 1);
 #else
 		timestamp = call Timestamp.getTime32();
-		trace(DBG_USR1, "setting alarm to %d\r\n", timestamp + jfs);
+		//trace(DBG_USR1, "setting alarm to %d\r\n", timestamp + jfs);
 		call Timestamp.setAlarm(timestamp + jfs);
 #endif
 		call SplitControl.stop();
@@ -149,7 +149,7 @@ implementation
 			switch (state) {
 			case STATE_WAKEUP:
 				now_ts = call Timestamp.getTime32();
-				trace(DBG_USR1, "Timestamp difference: %d\r\n", now_ts - timestamp);
+				//trace(DBG_USR1, "Timestamp difference: %d\r\n", now_ts - timestamp);
 				break;
 			default:
 				signal SplitControl.startDone();
@@ -228,7 +228,7 @@ implementation
 				 * We have gone to sleep, but should be waking up already, so
 				 * we deactivate idle sleeping.
 				 */
-				trace (DBG_USR1, "Wakeup timer has fired before we managed to go to sleep...\r\n");
+				//trace (DBG_USR1, "Wakeup timer has fired before we managed to go to sleep...\r\n");
 				sleep_interval = 0;
 			}
 		}
@@ -306,14 +306,14 @@ implementation
 		 * PFLAGS+=-DMY_ADDRESS=N make imote2  (to set
 		 * TOS_LOCAL_ADDRESS)
 		 */
-		trace(DBG_USR1, "rxPktDone() marker 1, TOS_LOCAL_ADDRESS = %d, dest_id = %d, src_id = %d, pkt_type = %d\r\n", TOS_LOCAL_ADDRESS, rxPkt->dest_id, rxPkt->src_id, rxPkt->type);
+		//trace(DBG_USR1, "rxPktDone() marker 1, TOS_LOCAL_ADDRESS = %d, dest_id = %d, src_id = %d, pkt_type = %d\r\n", TOS_LOCAL_ADDRESS, rxPkt->dest_id, rxPkt->src_id, rxPkt->type);
 		/*
 		 * If the packet isn't a broadcast and not intended for us
 		 * either, we just drop it.
 		 */
 		if ((rxPkt->dest_id != TOS_LOCAL_ADDRESS) && (rxPkt->dest_id != POLL_BROADCAST_ID))
 			return data;
-		trace(DBG_USR1, "rxPktDone() marker 2, chkState = %d\r\n", chkState);
+		//trace(DBG_USR1, "rxPktDone() marker 2, chkState = %d\r\n", chkState);
 
 		/*
 		 * If we are waiting for an ACK that never arrived and we've
@@ -324,14 +324,14 @@ implementation
 		if ((chkState == STATE_WAIT_ACK) && (rxPkt->type == POLL_REQ))
 			atomic chkState = state = STATE_IDLE;
 
-		trace(DBG_USR1, "POLL_BEACON=%d, type=%d\r\n", POLL_BEACON, rxPkt->type);
+		//trace(DBG_USR1, "POLL_BEACON=%d, type=%d\r\n", POLL_BEACON, rxPkt->type);
 		/*
 		 * If the packet is a beacon, extract relevant information.
 		 */
 		if (rxPkt->type == POLL_BEACON) {
 			pMacPkt = (MACPkt *)data;
 			atomic sleep_interval = pMacPkt->sleep_jf;
-			trace(DBG_USR1, "beacon received, setting sleep interval to %d jiffies\r\n", pMacPkt->sleep_jf);
+			//trace(DBG_USR1, "beacon received, setting sleep interval to %d jiffies\r\n", pMacPkt->sleep_jf);
 		}
 		if (chkState == STATE_IDLE) {
 			switch(rxPkt->type) {
@@ -340,20 +340,20 @@ implementation
 			 * upper layer and change our state accordingly.
 			 */
 			case POLL_REQ:
-				trace(DBG_USR1, "rxPktDone() marker 4\r\n");
+				//trace(DBG_USR1, "rxPktDone() marker 4\r\n");
 				atomic state = STATE_DATA_REQ;
 				atomic head_id = rxPkt->src_id;
 				signal PollNodeComm.dataRequested(data);
 				break;
 			default:
-				trace(DBG_USR1, "rxPktDone() marker 5, id=%d\r\n", rxPkt->type);
+				//trace(DBG_USR1, "rxPktDone() marker 5, id=%d\r\n", rxPkt->type);
 			}
 		} else if (chkState == STATE_WAIT_ACK) {
 			/* We've been waiting for an ACK. If the received packet
 			 * is not an ACK, just drop it. Otherwise signal the
 			 * upper layer about the ACK receipt.
 			 */
-			trace(DBG_USR1, "rxPktDone() marker 6\r\n");
+			//trace(DBG_USR1, "rxPktDone() marker 6\r\n");
 			if (rxPkt->type != POLL_ACK)
 				return data;
 			else {
@@ -363,7 +363,7 @@ implementation
 			}
 
 		}
-		trace(DBG_USR1, "rxPktDone() marker 7\r\n");
+		//trace(DBG_USR1, "rxPktDone() marker 7\r\n");
 		return data;
 	}
 
@@ -372,7 +372,7 @@ implementation
 	{
 
 		atomic {
-			trace(DBG_USR1, "txPktDone called with state = %d\r\n", state);
+			//trace(DBG_USR1, "txPktDone called with state = %d\r\n", state);
 			switch(state) {
 			case STATE_DATA_TX:
 				if (error) {

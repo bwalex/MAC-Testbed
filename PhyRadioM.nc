@@ -248,10 +248,10 @@ implementation
 	 */
 	task void rxFail() {
 		DBG_OUT(DBG_USR1, "rxFail() started \r\n");
-		signal PhyComm.rxPktDone(rxBuf, 1);
 		atomic {
 			flags &= ~FLAG_RECV;
 		}
+		signal PhyComm.rxPktDone(rxBuf, 1);
 		DBG_OUT(DBG_USR1, "rxFail() called\r\n");
 	}
 
@@ -261,10 +261,10 @@ implementation
 	 */
 	task void rxPktDone() {
 		DBG_OUT(DBG_USR1, "rxPktDone() started\r\n");
-		signal PhyComm.rxPktDone(rxBuf, 0);
 		atomic {
 			flags &= ~FLAG_RECV;
 		}
+		signal PhyComm.rxPktDone(rxBuf, 0);
 		DBG_OUT(DBG_USR1, "rxPktDone() called\r\n");
 	}
 
@@ -274,10 +274,10 @@ implementation
 	 */
 	task void txPktDone() {
 		DBG_OUT(DBG_USR1, "txPktDone() started\r\n");
-		signal PhyComm.txPktDone(txBuf, 0);
 		atomic {
 			state = STATE_IDLE;
 		}
+		signal PhyComm.txPktDone(txBuf, 0);
 		DBG_OUT(DBG_USR1, "txPktDone() called\r\n");
 	}
 

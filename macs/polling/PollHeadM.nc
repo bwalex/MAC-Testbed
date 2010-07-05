@@ -71,7 +71,7 @@ implementation
 	MACHeader *pkt;
 	MACHeader *rxPkt;
 	uint8_t pkt_len;
-	uint8_t node_id;
+	uint16_t node_id;
 
 	void wakeup()
 	{
@@ -131,7 +131,7 @@ implementation
 		MACPkt	*mp;
 
 		trace(DBG_USR1, "beacon timer fired, sending beacon\r\n");
-
+#if 0
 		atomic {
 			mh = (MACHeader *)&txPkt;
 			mp = (MACPkt *)&txPkt;
@@ -141,10 +141,9 @@ implementation
 			mp->sleep_jf = sleep_interval;
 		}
 		
-
 		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL)
 			trace(DBG_USR1, "Failed to send beacon :(\r\n");
-
+#endif
 		return;
 	}
 
@@ -157,8 +156,7 @@ implementation
 		MACHeader *mh;
 		MACPkt	*mp;
 
-		trace(DBG_USR1, "beacon timer fired, sending beacon\r\n");
-
+#if 0
 		atomic {
 			mh = (MACHeader *)&txPkt;
 			mp = (MACPkt *)&txPkt;
@@ -167,9 +165,11 @@ implementation
 			mh->type = POLL_SAMPLE;
 		}
 	
-		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL)
-			trace(DBG_USR1, "Failed to send beacon :(\r\n");
-
+		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL) {
+			return SUCCESS;
+			//trace(DBG_USR1, "Failed to send sampleStart signal :(\r\n");
+		}
+#endif
 		return SUCCESS;
 	}
 
@@ -228,7 +228,8 @@ implementation
 		default:
 			signal SplitControl.startDone();
 			atomic state = STATE_IDLE;
-			call BeaconTimer.start(TIMER_REPEAT, BEACON_INTERVAL);
+			/* XXX: deactivate beaconing */
+			//call BeaconTimer.start(TIMER_REPEAT, BEACON_INTERVAL);
 		}
 		return SUCCESS;
 	}
@@ -315,6 +316,7 @@ implementation
 	command result_t PollHeadComm.requestData(uint8_t u_node_id, void *data, uint8_t length)
 	{
 		uint8_t chkState;
+		result_t ret;
 
 		atomic chkState = state;
 
@@ -336,8 +338,10 @@ implementation
 			return SUCCESS;
 		}
 
-		atomic state = STATE_REQ_TX;
-		return call PhyComm.txPkt(pkt, pkt_len);
+		ret = call PhyComm.txPkt(pkt, pkt_len);
+		if (ret == SUCCESS)
+			state = STATE_REQ_TX;
+		return ret;
 	}
 
 	/*
@@ -367,8 +371,8 @@ implementation
 				break;
 
 			default:
-				trace(DBG_USR1, "sendSampleStartDone() assumed in txPktDone.\r\n");
-				signal PollHeadComm.sendSampleStartDone();
+				//trace(DBG_USR1, "sendSampleStartDone() assumed in txPktDone.\r\n");
+				//signal PollHeadComm.sendSampleStartDone();
 				break;
 			}
 		}
