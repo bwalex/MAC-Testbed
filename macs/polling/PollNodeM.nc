@@ -74,6 +74,10 @@ implementation
 	uint8_t node_id;
 	uint8_t head_id;
 
+	/*
+	 * We are supposed to wakeup. Get the current timestamp and see how long
+	 * we really sleeped. Then set us into wakeup state and wake up the PHY.
+	 */
 	void wakeup()
 	{
 		uint32_t now_ts;
@@ -95,12 +99,20 @@ implementation
 		call PhyState.idle();
 	}
 
+	/*
+	 * The Precision timer fired for wakeup, so we call the wakeup function
+	 * (see above).
+	 */
 	async event result_t Timestamp.alarmFired(uint32_t val)
 	{			
 		wakeup();
 		return SUCCESS;
 	}
 
+	/*
+	 * The sleep function puts the PHY to sleep for 'jfs' jiffies and sets
+	 * up a timer to signal the wakeup.
+	 */
 	void sleep(uint32_t jfs)
 	{
 		if (jfs == 0)
@@ -123,6 +135,13 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * Startup is done (this is also called as callback from PhyState.idle).
+	 * If we were waking up, see how much the wakeup took until radio was
+	 * back to idle.
+	 * Otherwise notify upper layer of the MAC start completion.
+	 * Always set the radiostate and our state to idle.
+	 */
 	event result_t PhyControl.startDone()
 	{
 		uint32_t now_ts;
@@ -142,6 +161,10 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * Initialize the PHY and Precision Timer, as well as our state to an
+	 * invalid state.
+	 */
 	command result_t SplitControl.init()
 	{
 		atomic sleep_interval = 0;
@@ -150,6 +173,10 @@ implementation
 		return call PhyControl.init();
 	}
 
+	/*
+	 * When initialization completed, the radio is basically sleeping, until
+	 * a startup sequence is started. Change our states accordingly.
+	 */
 	event result_t PhyControl.initDone()
 	{
 		atomic radioState = RADIO_SLEEP;
@@ -163,7 +190,9 @@ implementation
 		return SUCCESS;
 	}
 
-
+	/*
+	 * Startup precision timer and PHY.
+	 */
 	command result_t SplitControl.start()
 	{
 		call TSControl.start();
@@ -175,6 +204,9 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * Stopping the PHY means putting it to sleep.
+	 */
 	command result_t SplitControl.stop()
 	{
 		atomic state = STATE_SLEEP;
@@ -218,11 +250,16 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * We've been asked to send some data back to whoever requested the data
+	 * in the first place.
+	 */
 	command result_t PollNodeComm.txData(void *data, uint8_t length)
 	{
 		uint8_t chkState;
 		atomic chkState = state;
 		
+		/* If no data was requested, fail immediately */
 		if (chkState != STATE_DATA_REQ)
 			return FAIL;
 
@@ -231,10 +268,15 @@ implementation
 			pkt_len = length;
 		}
 		pkt->src_id = TOS_LOCAL_ADDRESS;
+		/*
+		 * Set the destination id to the id of the cluster head, as seen
+		 * in the data request.
+		 */
 		atomic pkt->dest_id = head_id;
 		pkt->type = POLL_DATA;
 		atomic state = STATE_DATA_TX;
 
+		/* Finally (try to) send the packet or fail. */
 		if (call PhyComm.txPkt(pkt, pkt_len) == FAIL) {
 			atomic state = STATE_IDLE;
 			return FAIL;
@@ -246,6 +288,10 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * A packet has been successfully received. Check that the packet is
+	 * intended for us and process accordingly.
+	 */
 	event void* PhyComm.rxPktDone(void *data, uint8_t error)
 	{
 		MACPkt *pMacPkt;
@@ -261,14 +307,27 @@ implementation
 		 * TOS_LOCAL_ADDRESS)
 		 */
 		trace(DBG_USR1, "rxPktDone() marker 1, TOS_LOCAL_ADDRESS = %d, dest_id = %d, src_id = %d, pkt_type = %d\r\n", TOS_LOCAL_ADDRESS, rxPkt->dest_id, rxPkt->src_id, rxPkt->type);
+		/*
+		 * If the packet isn't a broadcast and not intended for us
+		 * either, we just drop it.
+		 */
 		if ((rxPkt->dest_id != TOS_LOCAL_ADDRESS) && (rxPkt->dest_id != POLL_BROADCAST_ID))
 			return data;
 		trace(DBG_USR1, "rxPktDone() marker 2, chkState = %d\r\n", chkState);
 
+		/*
+		 * If we are waiting for an ACK that never arrived and we've
+		 * been requested data, set us back to idle to prepare for
+		 * sending data again, no matter if we received the ack before
+		 * or not.
+		 */
 		if ((chkState == STATE_WAIT_ACK) && (rxPkt->type == POLL_REQ))
 			atomic chkState = state = STATE_IDLE;
 
 		trace(DBG_USR1, "POLL_BEACON=%d, type=%d\r\n", POLL_BEACON, rxPkt->type);
+		/*
+		 * If the packet is a beacon, extract relevant information.
+		 */
 		if (rxPkt->type == POLL_BEACON) {
 			pMacPkt = (MACPkt *)data;
 			atomic sleep_interval = pMacPkt->sleep_jf;
@@ -276,6 +335,10 @@ implementation
 		}
 		if (chkState == STATE_IDLE) {
 			switch(rxPkt->type) {
+			/*
+			 * If we are idle and we received a data request, signal
+			 * upper layer and change our state accordingly.
+			 */
 			case POLL_REQ:
 				trace(DBG_USR1, "rxPktDone() marker 4\r\n");
 				atomic state = STATE_DATA_REQ;
@@ -286,6 +349,10 @@ implementation
 				trace(DBG_USR1, "rxPktDone() marker 5, id=%d\r\n", rxPkt->type);
 			}
 		} else if (chkState == STATE_WAIT_ACK) {
+			/* We've been waiting for an ACK. If the received packet
+			 * is not an ACK, just drop it. Otherwise signal the
+			 * upper layer about the ACK receipt.
+			 */
 			trace(DBG_USR1, "rxPktDone() marker 6\r\n");
 			if (rxPkt->type != POLL_ACK)
 				return data;

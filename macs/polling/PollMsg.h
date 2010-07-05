@@ -56,6 +56,11 @@ typedef struct {
 } AppHeader;
 
 //#define APP_PAYLOAD_LEN (100 - sizeof(AppHeader) - 2)
+/*
+ * set APP_PAYLOAD_LEN to whatever you want, just keep in mind that
+ * the total packet size, including PHY Header, MAC Header and
+ * checksum tail CANNOT exceed 128 bytes.
+ */
 #define APP_PAYLOAD_LEN   44
 
 typedef struct {

@@ -91,18 +91,24 @@ implementation
 		return SUCCESS;
 	}
 
+	/* Fail a data request and get us back to idle */
 	task void rqDataFail()
 	{
 		signal PollHeadComm.requestDataDone(rxPkt->src_id, (void *)rxPkt, 1);
 		atomic state = STATE_IDLE;
 	}
 
+	/*
+	 * Notify that a data request has been fulfilled (i.e. data received,
+	 * ack sent.
+	 */
 	task void rqDataDone()
 	{
 		signal PollHeadComm.requestDataDone(rxPkt->src_id, (void *)rxPkt, 0);
 		atomic state = STATE_IDLE;
 	}
 
+	/* Send an ACK to the current node_id */
 	task void sendAck()
 	{
 		MACHeader *mh;
@@ -118,6 +124,7 @@ implementation
 		return;
 	}
 
+	/* Send a Beacon to the whole cluster */
 	void sendBeacon()
 	{
 		MACHeader *mh;
@@ -141,6 +148,10 @@ implementation
 		return;
 	}
 
+	/* 
+	 * Send the sample start signal. One should wait for the sample send
+	 * completion
+	 */
 	command result_t PollHeadComm.sendSampleStart()
 	{
 		MACHeader *mh;
@@ -162,12 +173,19 @@ implementation
 		return SUCCESS;
 	}
 
-
+	/*
+	 * Separate task to send the beacon.
+	 */
 	task void sendBeaconTask()
 	{
 		sendBeacon();
 	}
 
+	/*
+	 * The beacon timer has fired, so it's time to send a beacon to the
+	 * network. Try to post the sendBeacon() task, but if it isn't possible,
+	 * try to send the beacon directly.
+	 */
 	event result_t BeaconTimer.fired()
 	{
 		if ((post sendBeaconTask()) == FAIL)
@@ -176,12 +194,21 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * Set the sleep interval for nodes. This is broadcast in the beacon
+	 * packet.
+	 */
 	command result_t PollHeadComm.setSleepInterval(uint32_t sleep_jiffies)
 	{
 		atomic sleep_interval = sleep_jiffies;
 		return SUCCESS;
 	}
 
+	/*
+	 * The startup sequence is done. If we were woken up to send a packet,
+	 * immediately send it. Otherwise set us to idle and start the beacon
+	 * timer.
+	 */
 	event result_t PhyControl.startDone()
 	{
 		uint8_t chkState;
@@ -206,12 +233,19 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * Init by setting the state to an invalid state and initialize PHY.
+	 */
 	command result_t SplitControl.init()
 	{
 		atomic state = 0xAA;
 		return call PhyControl.init();
 	}
 
+	/*
+	 * Phy initialization is done. Until the startup sequence the radio is
+	 * basically sleeping.
+	 */
 	event result_t PhyControl.initDone()
 	{
 		atomic radioState = RADIO_SLEEP;
@@ -225,7 +259,7 @@ implementation
 		return SUCCESS;
 	}
 
-
+	/* On startup, also start the PHY */
 	command result_t SplitControl.start()
 	{
 		return call PhyControl.start();
@@ -236,12 +270,20 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * Stopping means putting to sleep, so change state accordingly and call
+	 * lower layer.
+	 */
 	command result_t SplitControl.stop()
 	{
 		atomic state = STATE_SLEEP;
 		return call PhyControl.stop();
 	}
 
+	/*
+	 * Stopping the PHY has completed, so change the radio state
+	 * accordingly.
+	 */
 	event result_t PhyControl.stopDone()
 	{
 		atomic radioState = RADIO_SLEEP;
@@ -254,13 +296,22 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * Cancel the current request by setting an invalid node_id and putting
+	 * us back into idle state.
+	 */
 	command result_t PollHeadComm.cancelRequest()
 	{
-		atomic node_id = 254;
+		atomic node_id = 65534;
 		atomic state = STATE_IDLE;
 		return SUCCESS;
 	}
 
+	/*
+	 * Command to request data from a single node. We basically wake up the
+	 * radio if needed. The startDone event will then send the request for
+	 * us, otherwise, if we were not sleeping, we send the request.
+	 */
 	command result_t PollHeadComm.requestData(uint8_t u_node_id, void *data, uint8_t length)
 	{
 		uint8_t chkState;
@@ -289,6 +340,12 @@ implementation
 		return call PhyComm.txPkt(pkt, pkt_len);
 	}
 
+	/*
+	 * Transmitting a packet completed. If we were sending a data request,
+	 * put us into data_wait state.
+	 * If we were sending an ACK, signal either failure or completion of the
+	 * data request via the relevant tasks.
+	 */
 	event result_t PhyComm.txPktDone(void *data, uint8_t error)
 	{
 		atomic {
@@ -323,24 +380,43 @@ implementation
 		return SUCCESS;
 	}
 
+	/*
+	 * We've successfully received a packet. Now we check if the request was
+	 * cancelled. If so, we just ignore it, otherwise we do a few more
+	 * sanity checks and then send the ACK if appropriate.
+	 */
 	event void *PhyComm.rxPktDone(void *data, uint8_t error)
 	{
 		uint8_t chkState;
 
 		atomic chkState = state;
 
-		if (node_id == 254)
+		/* Was the last request cancelled? If so, drop the packet */
+		if (node_id == 65534)
 			return data;
 
+		/*
+		 * If we are not waiting for data or discovery, drop the packet
+		 */
 		if ((chkState != STATE_DATA_WAIT) && (chkState != STATE_DISCOVERY_WAIT))
 			return data;
 		
 		rxPkt = data;
+		/*
+		 * If we are in data wait state but the received packet is not
+		 * of the data type or an error occured, post the data request
+		 * fail task.
+		 */
 		if ((chkState == STATE_DATA_WAIT) && ((rxPkt->type != POLL_DATA) || (error))) {
 			post rqDataFail();
 			return data;
 		}
 
+		/*
+		 * If we are waiting for data but the data we received is from a
+		 * node we haven't requested any data from recently, just drop
+		 * it.
+		 */
 		if ((chkState == STATE_DATA_WAIT) && (rxPkt->src_id != node_id))
 			return data;
 
