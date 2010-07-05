@@ -63,7 +63,7 @@ implementation
 
 	PhyPktBuf pktBuf;
 	uint8_t *txBuf;
-	uint8_t *rxBuf;
+	norace uint8_t *rxBuf;
 	uint8_t txBufSz;
 	uint8_t rxBufSz;
 
@@ -287,8 +287,6 @@ implementation
 	 * transmit FIFO.
 	 */
 	task void txPkt() {
-		uint8_t status;
-
 		/* If needed, flush the RXBUF to get the radio into a good state */
 		if ((!TOSH_READ_CC_FIFO_PIN() && !TOSH_READ_CC_FIFOP_PIN())) {
 			flushRXFIFO();
