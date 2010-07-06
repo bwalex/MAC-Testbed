@@ -21,6 +21,9 @@ module PhyRadioM
 		interface HPLCC2420Interrupt as FIFOP;
 		interface HPLCC2420FIFO as FIFO;
 		interface HPLCC2420 as HPL;
+		/* The BackoffTimer works with 1us precision */
+		interface TimerJiffyAsync as BackoffTimer;
+		interface StdControl as BackoffTimerControl;
 	}
 }
 

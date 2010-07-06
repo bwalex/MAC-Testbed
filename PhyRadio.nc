@@ -13,7 +13,7 @@ configuration PhyRadio
 
 implementation
 {
-	components PhyRadioM, CC2420ControlM, HPLCC2420C;
+	components PhyRadioM, CC2420ControlM, HPLCC2420C, TimerJiffyAsyncC;
 
 	SplitControl = PhyRadioM;
 	PhyComm = PhyRadioM;
@@ -28,6 +28,8 @@ implementation
 	PhyRadioM.FIFO -> HPLCC2420C.HPLCC2420FIFO;
 	PhyRadioM.FIFOP -> HPLCC2420C.InterruptFIFOP;
 	PhyRadioM.SFD -> HPLCC2420C.CaptureSFD;
+	PhyRadioM.BackoffTimerControl -> TimerJiffyAsyncC.StdControl;
+	PhyRadioM.BackoffTimer -> TimerJiffyAsyncC.TimerJiffyAsync;
 
 #if 1
 	CC2420ControlM.HPLChipconControl -> HPLCC2420C.StdControl;

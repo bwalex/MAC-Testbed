@@ -321,7 +321,7 @@ implementation
 		atomic chkState = state;
 
 		if ((chkState != STATE_IDLE) && (chkState != STATE_SLEEP)) {
-			trace(DBG_USR1, "chkState = %d, hence failing\r\n", chkState);
+			//trace(DBG_USR1, "chkState = %d, hence failing\r\n", chkState);
 			return FAIL;
 		}
 
