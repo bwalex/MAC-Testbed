@@ -36,9 +36,9 @@ implementation
 	enum {
 		STATE_STARTUP = 0,
 		STATE_IDLE, /* 1 */
-		STATE_TRANSMITTING_PRE,
-		STATE_TRANSMITTING, /* 2 */
-		STATE_TRANSMITTING_WAIT, /* 3 */
+		STATE_TRANSMITTING_PRE, /* 2 */
+		STATE_TRANSMITTING, /* 3 */
+		STATE_TRANSMITTING_WAIT, /* 4 */
 		STATE_TRANSMITTING_DONE,
 		STATE_SLEEP,
 		STATE_DEEP_SLEEP
@@ -446,12 +446,12 @@ implementation
 			 * XXX: enable SFD capture to see when send finishes... check
 			 * datasheet again anyways
 			 */
-			atomic state = STATE_TRANSMITTING;
 			DBG_OUT(DBG_USR1, "sendpkt(): enabling SFD, TX_ACTIVE set\r\n");
 			/* capture rising edge */
 			call SFD.enableCapture(TRUE);
 		} else {
 			if (stxoncca && (!backoff_set) && (local_retries < local_backoff_retries)) {
+				atomic state = STATE_TRANSMITTING_PRE;
 				atomic ++retries;
 				atomic flags |= FLAG_BACKOFF;
 				atomic {
@@ -463,7 +463,6 @@ implementation
 				}
 				DBG_OUT(DBG_USR1, "sendpkt(): Backing off for %d us, retry %d / %d\r\n",
 								backoff_time, local_retries+1, local_backoff_retries);
-								
 				call BackoffTimer.setOneShot(backoff_time);
 			} else {
 				atomic retries = 0;
@@ -477,6 +476,7 @@ implementation
 	command result_t PhyComm.reTxPkt()
 	{
 		atomic retries = 0;
+		atomic state = STATE_TRANSMITTING;
 		sendpkt();
 	}
 
@@ -505,7 +505,7 @@ implementation
 			DBG_OUT(DBG_USR1, "PhyComm.txPkt(): going into STATE_TRANSMITTING\r\n");
 			/* Set us into transmit state */
 			atomic {
-				state = STATE_TRANSMITTING_PRE;
+				state = STATE_TRANSMITTING;
 			}
 		}
 
@@ -809,6 +809,7 @@ implementation
 		if (!backoff)
 			return SUCCESS;
 
+		atomic state = STATE_TRANSMITTING;
 		sendpkt();
 	}
 
