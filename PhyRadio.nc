@@ -8,12 +8,14 @@ configuration PhyRadio
 		interface CarrierSense;
 		interface SignalStrength;
 		interface CC2420Control;
+		interface BackoffControl;
+		interface PhyRadioControl;
 	}
 }
 
 implementation
 {
-	components PhyRadioM, CC2420ControlM, HPLCC2420C, TimerJiffyAsyncC;
+	components PhyRadioM, CC2420ControlM, HPLCC2420C, TimerJiffyAsyncC, RandomLFSR;
 
 	SplitControl = PhyRadioM;
 	PhyComm = PhyRadioM;
@@ -21,6 +23,8 @@ implementation
 	CarrierSense = PhyRadioM;
 	SignalStrength = PhyRadioM;
 	CC2420Control = CC2420ControlM;
+	BackoffControl = PhyRadioM;
+	PhyRadioControl = PhyRadioM;
 
 	PhyRadioM.CC2420SplitControl -> CC2420ControlM;
 	PhyRadioM.CC2420Control -> CC2420ControlM;
@@ -30,11 +34,10 @@ implementation
 	PhyRadioM.SFD -> HPLCC2420C.CaptureSFD;
 	PhyRadioM.BackoffTimerControl -> TimerJiffyAsyncC.StdControl;
 	PhyRadioM.BackoffTimer -> TimerJiffyAsyncC.TimerJiffyAsync;
+	PhyRadioM.Random -> RandomLFSR;
 
-#if 1
 	CC2420ControlM.HPLChipconControl -> HPLCC2420C.StdControl;
 	CC2420ControlM.HPLChipcon -> HPLCC2420C.HPLCC2420;
 	CC2420ControlM.HPLChipconRAM -> HPLCC2420C.HPLCC2420RAM;
 	CC2420ControlM.CCA -> HPLCC2420C.InterruptCCA;
-#endif
 }

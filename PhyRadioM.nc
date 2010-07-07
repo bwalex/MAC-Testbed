@@ -13,6 +13,8 @@ module PhyRadioM
 		interface PhyComm;
 		interface CarrierSense;
 		interface SignalStrength;
+		interface BackoffControl;
+		interface PhyRadioControl;
 	}
 	uses {
 		interface SplitControl as CC2420SplitControl;
@@ -24,6 +26,7 @@ module PhyRadioM
 		/* The BackoffTimer works with 1us precision */
 		interface TimerJiffyAsync as BackoffTimer;
 		interface StdControl as BackoffTimerControl;
+		interface Random;
 	}
 }
 
@@ -33,6 +36,7 @@ implementation
 	enum {
 		STATE_STARTUP = 0,
 		STATE_IDLE, /* 1 */
+		STATE_TRANSMITTING_PRE,
 		STATE_TRANSMITTING, /* 2 */
 		STATE_TRANSMITTING_WAIT, /* 3 */
 		STATE_TRANSMITTING_DONE,
@@ -41,9 +45,13 @@ implementation
 	};
 
 #include "PhyRadioMsg.h"
-#define FLAG_RECV		0x01
-#define FLAG_RXBUF_BUSY	0x02
-#define FLAG_CCA		0x04
+#define FLAG_RECV			0x01
+#define FLAG_RXBUF_BUSY		0x02
+#define FLAG_CCA			0x04
+#define FLAG_BACKOFF		0x08
+#define FLAG_TXONCCA		0x10
+#define FLAG_BACKOFF_RANDOM	0x20
+
 #define RSSI_OFFSET		-45
 
 /*
@@ -60,7 +68,7 @@ implementation
 
 	uint8_t state;
 	//uint8_t stateLock;
-	uint8_t flags;
+	uint16_t flags;
 	uint8_t	lastPower;
 	uint16_t lastFreq;
 
@@ -69,6 +77,12 @@ implementation
 	norace uint8_t *rxBuf;
 	uint8_t txBufSz;
 	uint8_t rxBufSz;
+	uint8_t	retries;
+
+	uint16_t min_backoff_us;
+	uint16_t def_backoff_us;
+	uint16_t max_backoff_us;
+	uint8_t backoff_retries;
 
 	/* Set the CCA mode to '1', refer to datasheet */
 	static inline result_t setCCAMode()
@@ -115,8 +129,11 @@ implementation
 			state = 0xAA; /* set an invalid state to catch problems */
 			lastPower = 31; /* Default to maximum power */
 			lastFreq = 2440; /* Default to frequency 2440 MHz */
+			def_backoff_us = 2;
 		}
-		trace(DBG_USR1, "Version 0.2 of PhyRadioM started, LOCAL_ADDR = %d\r\n", TOS_LOCAL_ADDRESS);
+		call BackoffTimerControl.init();
+		call Random.init();
+		trace(DBG_USR1, "Version 0.3 of PhyRadioM started, LOCAL_ADDR = %d\r\n", TOS_LOCAL_ADDRESS);
 		return call CC2420SplitControl.init();
 		/* call init in the underlying layers */
 	}
@@ -149,6 +166,7 @@ implementation
 		atomic {
 			state = STATE_STARTUP;
 		}
+		call BackoffTimerControl.start();
 		DBG_OUT(DBG_USR1, "calling CC2420SplitControl.start()\r\n");
 		return call CC2420SplitControl.start();
 	}
@@ -188,6 +206,7 @@ implementation
 		DBG_OUT(DBG_USR1, "SplitControl.stop() called!\r\n");
 		call SFD.disable();
 		call FIFOP.disable();
+		call BackoffTimerControl.stop();
 		atomic {
 			state = STATE_SLEEP;
 		}
@@ -384,7 +403,11 @@ implementation
 
 	void sendpkt()
 	{
+		uint8_t backoff_set;
+		uint16_t backoff_time;
+		uint8_t stxoncca;
 		uint8_t status;
+		uint8_t local_retries, local_backoff_retries;
 
 		DBG_OUT(DBG_USR1, "sendpkt(): going into TXON mode (STXON)\r\n");
 		/* If necessary, return radio to good state by flushing RXFIFO */
@@ -393,11 +416,17 @@ implementation
 			flushRXFIFO();
 		}
 
+		atomic {
+			local_retries = retries;
+			local_backoff_retries = backoff_retries;
+			stxoncca = (flags & FLAG_TXONCCA);
+			backoff_set = (flags & FLAG_BACKOFF);
+		}
 		/*
 		 * Set radio into transmit mode so it starts transmitting the data in
 		 * the TXFIFO.
 		 */
-		call HPL.cmd(CC2420_STXON); /* XXX */
+		call HPL.cmd((stxoncca)?CC2420_STXONCCA:CC2420_STXON);
 
 		/*
 		 * Check the status byte. This is not strictly necessary when using
@@ -417,18 +446,37 @@ implementation
 			 * XXX: enable SFD capture to see when send finishes... check
 			 * datasheet again anyways
 			 */
+			atomic state = STATE_TRANSMITTING;
 			DBG_OUT(DBG_USR1, "sendpkt(): enabling SFD, TX_ACTIVE set\r\n");
 			/* capture rising edge */
 			call SFD.enableCapture(TRUE);
 		} else {
-			DBG_OUT(DBG_USR1, "sendpkt(): status no good, fail TX\r\n");
-			txFail(txBuf);
+			if (stxoncca && (!backoff_set) && (local_retries < local_backoff_retries)) {
+				atomic ++retries;
+				atomic flags |= FLAG_BACKOFF;
+				atomic {
+					if (flags & FLAG_BACKOFF_RANDOM) {
+						backoff_time = (((call Random.rand())%max_backoff_us)+min_backoff_us);
+					} else {
+						backoff_time = def_backoff_us;
+					}
+				}
+				DBG_OUT(DBG_USR1, "sendpkt(): Backing off for %d us, retry %d / %d\r\n",
+								backoff_time, local_retries+1, local_backoff_retries);
+								
+				call BackoffTimer.setOneShot(backoff_time);
+			} else {
+				atomic retries = 0;
+				DBG_OUT(DBG_USR1, "sendpkt(): status no good, fail TX\r\n");
+				txFail(txBuf);
+			}
 		}
 	
 	}
 
 	command result_t PhyComm.reTxPkt()
 	{
+		atomic retries = 0;
 		sendpkt();
 	}
 
@@ -457,7 +505,7 @@ implementation
 			DBG_OUT(DBG_USR1, "PhyComm.txPkt(): going into STATE_TRANSMITTING\r\n");
 			/* Set us into transmit state */
 			atomic {
-				state = STATE_TRANSMITTING;
+				state = STATE_TRANSMITTING_PRE;
 			}
 		}
 
@@ -489,6 +537,7 @@ implementation
 	 * just need to make sure no overflow occured and then send the packet.
 	 */
 	async event result_t FIFO.TXFIFODone(uint8_t length, uint8_t *data) {
+		atomic retries = 0;
 		sendpkt();
 		return SUCCESS;
 	}
@@ -746,6 +795,23 @@ implementation
 		return pkt; /* XXX? */
 	}
 
+	async event result_t BackoffTimer.fired() {
+		int backoff;
+
+		/* Check if the backoff flag is set; if not, just do nothing */
+		atomic {
+			backoff = (flags & FLAG_BACKOFF);
+			flags &= (~FLAG_BACKOFF);
+		}
+
+		DBG_OUT(DBG_USR1, "BackoffTimer fired! backoff = %d\r\n", backoff);
+
+		if (!backoff)
+			return SUCCESS;
+
+		sendpkt();
+	}
+
 	/*
 	 * Poll the CCA pin to see if the channel is clear. Notify the consumer
 	 * accordingly.
@@ -814,5 +880,59 @@ implementation
 		rssi += RSSI_OFFSET;
 
 		return rssi;
+	}
+
+	command result_t BackoffControl.enableBackoff()
+	{
+		atomic flags |= FLAG_TXONCCA;
+		return SUCCESS;
+	}
+
+	command result_t BackoffControl.disableBackoff()
+	{
+		atomic flags &= (~FLAG_TXONCCA);
+		return SUCCESS;
+	}
+
+	command result_t BackoffControl.setMode(uint8_t random)
+	{
+		if (random) {
+			atomic flags |= FLAG_BACKOFF_RANDOM;
+		} else {
+			atomic flags &= (~FLAG_BACKOFF_RANDOM);
+		}
+		return SUCCESS;
+	}
+
+	command result_t BackoffControl.setRandomLimits(uint16_t min, uint16_t max)
+	{
+		atomic {
+			min_backoff_us = min;
+			max_backoff_us = max+1;
+		}
+		return SUCCESS;
+	}
+
+	command result_t BackoffControl.setBackoffTime(uint16_t time)
+	{
+		atomic def_backoff_us = time;
+		return SUCCESS;
+	}
+
+	command result_t BackoffControl.setRetries(uint8_t retr) {
+		atomic backoff_retries = retr;
+		return SUCCESS;
+	}
+
+	command result_t PhyRadioControl.setFrequency(uint16_t freq)
+	{
+		atomic lastFreq = freq;
+		return call CC2420Control.TuneManual(freq);
+	}
+
+	command result_t PhyRadioControl.setPower(uint8_t power)
+	{
+		atomic lastPower = power;
+		return call CC2420Control.SetRFPower(power);
 	}
 }
