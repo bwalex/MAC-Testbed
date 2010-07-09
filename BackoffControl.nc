@@ -26,7 +26,7 @@ interface BackoffControl
 	command result_t enableBackoff();
 	command result_t disableBackoff();
 	command result_t setMode(uint8_t random);
-	command result_t setRandomLimits(uint16_t min, uint16_t max);
-	command result_t setBackoffTime(uint16_t time);
+	command result_t setRandomLimits(int16_t min, int16_t max);
+	command result_t setBackoffTime(int16_t time);
 	command result_t setRetries(uint8_t retr);
 }
