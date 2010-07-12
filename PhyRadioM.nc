@@ -87,10 +87,14 @@ implementation
 	/* Set the CCA mode to '1', refer to datasheet */
 	static inline result_t setCCAMode()
 	{
+#if 1
 		uint16_t reg;
 		reg = call HPL.read(CC2420_MDMCTRL0);
-		reg |= (1 << CC2420_MDMCTRL0_CCAMODE);
+		reg |= (3 << CC2420_MDMCTRL0_CCAMODE);
+		call CarrierSense.setThreshold(-40);
 		return call HPL.write(CC2420_MDMCTRL0, reg);
+#endif
+		return SUCCESS;
 	}
 
 	/* Flush the RXFIFO (twice) and clear the receive flag */
@@ -127,13 +131,13 @@ implementation
 		atomic {
 			flags = 0; /* Clear all flags */
 			state = 0xAA; /* set an invalid state to catch problems */
-			lastPower = 31; /* Default to maximum power */
+			lastPower = 15; /* Default to ~half power */
 			lastFreq = 2440; /* Default to frequency 2440 MHz */
 			def_backoff_us = 2;
 		}
 		call BackoffTimerControl.init();
 		call Random.init();
-		trace(DBG_USR1, "Version 0.3 of PhyRadioM started, LOCAL_ADDR = %d\r\n", TOS_LOCAL_ADDRESS);
+		trace(DBG_USR1, "Version 0.4 of PhyRadioM started, LOCAL_ADDR = %d\r\n", TOS_LOCAL_ADDRESS);
 		return call CC2420SplitControl.init();
 		/* call init in the underlying layers */
 	}
@@ -194,6 +198,7 @@ implementation
 		}
 
 		signal SplitControl.startDone();
+		//call CarrierSense.setThreshold(20);
 		return SUCCESS;
 	}
 
@@ -403,12 +408,18 @@ implementation
 
 	void sendpkt()
 	{
+		uint8_t chkState;
 		uint8_t backoff_set;
 		uint16_t backoff_time;
 		uint8_t stxoncca;
 		uint8_t status;
 		uint8_t local_retries, local_backoff_retries;
 
+		atomic chkState = state;
+		if (chkState != STATE_TRANSMITTING_PRE) {
+			trace(DBG_USR1, "sendPkt(): chkState=%d != STATE_TRANSMITTING_PRE\r\n", chkState);
+			return;
+		}
 		DBG_OUT(DBG_USR1, "sendpkt(): going into TXON mode (STXON)\r\n");
 		/* If necessary, return radio to good state by flushing RXFIFO */
 		if ((!TOSH_READ_CC_FIFO_PIN() && !TOSH_READ_CC_FIFOP_PIN())) {
@@ -422,11 +433,17 @@ implementation
 			stxoncca = (flags & FLAG_TXONCCA);
 			backoff_set = (flags & FLAG_BACKOFF);
 		}
+		if (stxoncca && (!TOSH_READ_RADIO_CCA_PIN()))
+			goto set_backoff;
 		/*
 		 * Set radio into transmit mode so it starts transmitting the data in
 		 * the TXFIFO.
 		 */
-		call HPL.cmd((stxoncca)?CC2420_STXONCCA:CC2420_STXON);
+		atomic state = STATE_TRANSMITTING;
+		if (stxoncca)
+			call HPL.cmd((CC2420_STXONCCA));
+		else
+			call HPL.cmd((CC2420_STXON));
 
 		/*
 		 * Check the status byte. This is not strictly necessary when using
@@ -435,12 +452,6 @@ implementation
 		 */
 		status = call HPL.cmd(CC2420_SNOP);
 		DBG_OUT(DBG_USR1, "sendpkt(): status from CC2420_SNOP = %d\r\n", status);
-		if ((status >> CC2420_TX_UNDERFLOW) & 0x01) {
-			DBG_OUT(DBG_USR1, "sendpkt(): tx fifo underflow, flushing and failing\r\n");
-			call HPL.cmd(CC2420_SFLUSHTX);
-			txFail(txBuf);
-			return;
-		}
 		if ((status >> CC2420_TX_ACTIVE) & 0x01) {
 			/*
 			 * XXX: enable SFD capture to see when send finishes... check
@@ -450,6 +461,8 @@ implementation
 			/* capture rising edge */
 			call SFD.enableCapture(TRUE);
 		} else {
+set_backoff:
+			DBG_OUT(DBG_USR1, "setting backoff, stxoncca=%d, backoff_set=%d, local_retries=%d\r\n", stxoncca, backoff_set, local_retries);
 			if (stxoncca && (!backoff_set) && (local_retries < local_backoff_retries)) {
 				atomic state = STATE_TRANSMITTING_PRE;
 				atomic ++retries;
@@ -461,7 +474,7 @@ implementation
 						backoff_time = def_backoff_us;
 					}
 				}
-				DBG_OUT(DBG_USR1, "sendpkt(): Backing off for %d us, retry %d / %d\r\n",
+				trace(DBG_USR1, "sendpkt(): Backing off for %d us, retry %d / %d\r\n",
 								backoff_time, local_retries+1, local_backoff_retries);
 				call BackoffTimer.setOneShot(backoff_time);
 			} else {
@@ -476,7 +489,8 @@ implementation
 	command result_t PhyComm.reTxPkt()
 	{
 		atomic retries = 0;
-		atomic state = STATE_TRANSMITTING;
+		atomic state = STATE_TRANSMITTING_PRE;
+		trace(DBG_USR1, "sendPkt() calling from PhyComm.reTxPkt\r\n");
 		sendpkt();
 	}
 
@@ -505,7 +519,8 @@ implementation
 			DBG_OUT(DBG_USR1, "PhyComm.txPkt(): going into STATE_TRANSMITTING\r\n");
 			/* Set us into transmit state */
 			atomic {
-				state = STATE_TRANSMITTING;
+				call BackoffTimer.stop();
+				flags &= (~FLAG_BACKOFF);
 			}
 		}
 
@@ -521,6 +536,7 @@ implementation
 		}
 		DBG_OUT(DBG_USR1, "PhyComm.txPkt(): post txPkt()\r\n");
 		/* post the actual transmit task */
+		atomic state = STATE_TRANSMITTING_PRE;
 		if ((post txPkt()) == FAIL) {
 			DBG_OUT(DBG_USR1, "PhyComm.txPkt(): post txPkt() failed!\r\n");
 			atomic {
@@ -538,6 +554,7 @@ implementation
 	 */
 	async event result_t FIFO.TXFIFODone(uint8_t length, uint8_t *data) {
 		atomic retries = 0;
+		DBG_OUT(DBG_USR1, "sendPkt() calling from TXFIFODone\r\n");
 		sendpkt();
 		return SUCCESS;
 	}
@@ -604,7 +621,7 @@ implementation
 			call SFD.disable();
 			atomic state = STATE_TRANSMITTING_DONE;
 			/* capture rising edge only */
-			//call SFD.enableCapture(TRUE); /* recv SFD capture */
+			call SFD.enableCapture(TRUE); /* recv SFD capture */
 			/*
 			 * Try and notify the consumer via a task. If not possible, signal
 			 * directly.
@@ -623,10 +640,11 @@ implementation
 				 * if the SFD is still low, we finish here, otherwise there was
 				 * another interrupt.
 				 */
-				call SFD.enableCapture(TRUE);
+				//call SFD.enableCapture(TRUE);
 				break;
 			}
 			DBG_OUT(DBG_USR1, "SFD.captured(): FALLTHROUGH after setting TXDONE state\r\n");
+			/*XXX *///break;
 			/* FALLTHROUGH when SFD is high again */
 		default: /* XXX: this should be default: */
 			/*
@@ -645,7 +663,7 @@ implementation
 			 * again (SFD.captured() in state TRANSMITTING_DONE. No idea why,
 			 * but it's not an RX SFD interrupt.
 			 */
-			call SFD.enableCapture(TRUE);
+			//call SFD.enableCapture(TRUE);
 			break;
 		//default:
 		}
@@ -724,7 +742,6 @@ implementation
 			return SUCCESS;
 		}
 	
-		/* XXX: possibly signal error to upper layer */
 		/* packet isn't of the right size, flush RXFIFO and end recv */
 		if ((length < PHY_MIN_PKT_LEN) || (length > PHY_MAX_PKT_LEN)) {
 			DBG_OUT(DBG_USR1, "length in RXFIFODone() is invalid, failing...\r\n");
@@ -752,6 +769,7 @@ implementation
 		pBuf->crc = data[length-1] >> 7;
 		DBG_OUT(DBG_USR1, "crc = %d, info.strength=%d\r\n", pBuf->crc, pBuf->info.strength);
 		if (pBuf->crc == 0) {
+			trace(DBG_USR1, "crc failed!!!!\r\n");
 			/* XXX: possibly move this into a rxPktFail() */
 			if (!post rxFail()) {
 				signal PhyComm.rxPktDone(rxBuf, 1);
@@ -763,13 +781,26 @@ implementation
 			/*
 			 * XXX: link quality index is at data[length-1] & 0x7F
 			 */
+#if 1
+			atomic flags &= ~FLAG_RECV;
+			signal PhyComm.rxPktDone(rxBuf, 0);
+#endif
+#if 0
 			if (!post rxPktDone()) {
 				signal PhyComm.rxPktDone(rxBuf, 0);
 				atomic {
 					flags &= ~FLAG_RECV;
 				}
 			}
+#endif
 		}
+
+		/* RXFIFO overflow */
+		if ((!TOSH_READ_CC_FIFO_PIN() && !TOSH_READ_CC_FIFOP_PIN())) {
+			flushRXFIFO();
+			return SUCCESS;
+		}		
+
 		/* If there's more to read, read the next packet */
 		if (!(TOSH_READ_CC_FIFOP_PIN())) {
 			if (post rxPkt())
@@ -804,12 +835,13 @@ implementation
 			flags &= (~FLAG_BACKOFF);
 		}
 
-		DBG_OUT(DBG_USR1, "BackoffTimer fired! backoff = %d\r\n", backoff);
+		trace(DBG_USR1, "BackoffTimer fired! backoff = %d\r\n", backoff);
 
 		if (!backoff)
 			return SUCCESS;
 
-		atomic state = STATE_TRANSMITTING;
+		atomic state = STATE_TRANSMITTING_PRE;
+		DBG_OUT(DBG_USR1, "sendPkt() calling from BackoffTimer.fired()\r\n");
 		sendpkt();
 	}
 
@@ -905,16 +937,16 @@ implementation
 		return SUCCESS;
 	}
 
-	command result_t BackoffControl.setRandomLimits(uint16_t min, uint16_t max)
+	command result_t BackoffControl.setRandomLimits(int16_t min, int16_t max)
 	{
 		atomic {
 			min_backoff_us = min;
-			max_backoff_us = max+1;
+			max_backoff_us = max+1-min;
 		}
 		return SUCCESS;
 	}
 
-	command result_t BackoffControl.setBackoffTime(uint16_t time)
+	command result_t BackoffControl.setBackoffTime(int16_t time)
 	{
 		atomic def_backoff_us = time;
 		return SUCCESS;

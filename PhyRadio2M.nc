@@ -123,10 +123,18 @@ implementation {
    * - Radio packet rcvd, signal 
    ***************************************************************************/
    task void PacketRcvd() {
-     signal PhyComm.rxPktDone(rxbufptr, 0);
+#if 0
      atomic {
        bPacketReceiving = FALSE;
      }
+#endif
+
+     signal PhyComm.rxPktDone(rxbufptr, 0);
+#if 1
+     atomic {
+       bPacketReceiving = FALSE;
+     }
+#endif
    }
 
   
@@ -468,8 +476,9 @@ implementation {
           return SUCCESS;
         }
       //} else {
-	  //atomic stateRadio = PRE_TX_STATE;
-	  //tryToSend();
+	  //	atomic stateRadio = PRE_TX_STATE;
+	  //	tryToSend();
+	  //	return SUCCESS;
 	  //}
     }
     return FAIL;
