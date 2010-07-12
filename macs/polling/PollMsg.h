@@ -41,6 +41,7 @@
 typedef struct {
    PhyHeader phyHdr;
    char type;
+   uint8_t pad[3];
    uint16_t src_id;
    uint16_t dest_id;
 } __attribute__((packed)) MACHeader;
