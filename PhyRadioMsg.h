@@ -35,9 +35,9 @@
 
 // Maximum packet length -- including headers of all layers
 // Each application can override the default max length in Makefile
-// Maximum allowable value is 127
+// Maximum allowable value is 125
 #ifndef PHY_MAX_PKT_LEN
-#define PHY_MAX_PKT_LEN 127
+#define PHY_MAX_PKT_LEN 125
 #endif
 
 // Physical-layer header to be put before data payload
