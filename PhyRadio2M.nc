@@ -31,6 +31,7 @@ module PhyRadio2M
 
 implementation {
 #include "PhyRadioMsg.h"
+#include "CSMAMsg.h"
   enum {
     DISABLED_STATE = 0,
     DISABLED_STATE_STARTTASK,
@@ -65,8 +66,8 @@ implementation {
   norace bool bAckEnable;
   bool bPacketReceiving;
   uint8_t txlength;
-  norace uint8_t* txbufptr;  // pointer to transmit buffer
-  norace uint8_t* rxbufptr;  // pointer to receive buffer
+  norace CSMAHeader* txbufptr;  // pointer to transmit buffer
+  norace CSMAHeader* rxbufptr;  // pointer to receive buffer
   PhyPktBuf RxBuf;	// save received messages
   
   int16_t min_backoff_us;
@@ -79,6 +80,7 @@ implementation {
 
   int16_t getInitialBackoff(uint8_t *pkt);
   int16_t getCongestionBackoff(uint8_t *pkt);
+  int16_t getAckBackoff(uint8_t *pkt);
   ///**********************************************************
   //* local function definitions
   //**********************************************************/
@@ -88,6 +90,9 @@ implementation {
      signal PhyComm.txPktDone(txbufptr, 1);
    }
 
+   task void sendFailTask() {
+   	sendFailed();
+   }
    void flushRXFIFO() {
      call FIFOP.disable();
      call HPLChipcon.read(CC2420_RXFIFO);          //flush Rx fifo
@@ -160,7 +165,7 @@ implementation {
       currentDSN = 0;
       bAckEnable = FALSE;
       bPacketReceiving = FALSE;
-      rxbufptr = (uint8_t *)&RxBuf;
+      rxbufptr = (CSMAHeader *)&RxBuf;
     }
 
     call TimerControl.init();
@@ -171,7 +176,7 @@ implementation {
 
   event result_t CC2420SplitControl.initDone() {
 	//trace(DBG_USR1, "init done!\r\n");
-	call CC2420Control.TuneManual(2440);
+	call CC2420Control.TuneManual(2480);
 	atomic backoff_retries = MAX_SEND_TRIES;
 	atomic def_backoff_us = CC2420_SYMBOL_UNIT * ((call Random.rand() % 0x3F) + 1);
     return signal SplitControl.initDone();
@@ -217,9 +222,13 @@ implementation {
     uint8_t chkstateRadio;
 
     atomic chkstateRadio = stateRadio;
-    atomic bAckEnable = FALSE;
-    call CC2420Control.disableAddrDecode();
-    call CC2420Control.disableAutoAck();
+    //atomic bAckEnable = FALSE;
+    atomic bAckEnable = TRUE;
+    call CC2420Control.enableAddrDecode();
+    call CC2420Control.enableAutoAck();
+    //call CC2420Control.setShortAddress(TOS_LOCAL_ADDRESS);
+    //call CC2420Control.disableAddrDecode();
+    //call CC2420Control.disableAutoAck();
     if (chkstateRadio == DISABLED_STATE) {
       atomic {
 	stateRadio = WARMUP_STATE;
@@ -338,9 +347,16 @@ implementation {
       call SFD.disable();
       // revert to receive SFD capture
       call SFD.enableCapture(TRUE);
+      // if acks are enabled and it is a unicast packet, wait for the ack
+      if ((bAckEnable) && (txbufptr->addr != TOS_BCAST_ADDR)) {
+        if (!(setAckTimer(CC2420_ACK_DELAY)))
+          sendFailed();
+      }
       // if no acks or broadcast, post packet send done event
-      if (!post PacketSent())
-        sendFailed();
+      else {
+	if (!post PacketSent())
+           sendFailed();
+      }
       break;
     default:
       // fire RX SFD handler
@@ -434,7 +450,7 @@ implementation {
 	atomic {
 	  stateRadio = POST_TX_ACK_STATE;
 	}
-        if (!post PacketSent())
+	if (!post sendFailTask())
 	  sendFailed();
       }
       break;
@@ -467,6 +483,20 @@ implementation {
       txlength = pkt_sz-1; 
       txbufptr = pkt;
       ((PhyHeader *)txbufptr)->length = pkt_sz-1;
+      if (bAckEnable && (txbufptr->addr != TOS_BCAST_ADDR)) {
+	 //trace(DBG_USR1, "ACK enabled\r\n");
+     	 txbufptr->fcfhi = CC2420_DEF_FCF_HI_ACK;
+      }
+      else
+	 txbufptr->fcfhi = CC2420_DEF_FCF_HI;
+	
+      txbufptr->fcflo = CC2420_DEF_FCF_LO;
+      txbufptr->dsn = ++currentDSN;
+      txbufptr->destpan = TOS_BCAST_ADDR;
+      txbufptr->addr = toLSB16(txbufptr->addr);
+      //((CSMAHeader *)txbufptr)->type = ...;
+      //((CSMAHeader *)txbufptr)->group = ...;
+
       atomic countRetry = backoff_retries;
 	  
 	  //atomic backoff = (flags & FLAG_TXONCCA);
@@ -508,7 +538,7 @@ implementation {
         flushRXFIFO();
 	return;
     }
-	//trace(DBG_USR1, "delayedRXFIFO 2!\r\n"); 
+    //trace(DBG_USR1, "delayedRXFIFO 2!\r\n"); 
 
     atomic {
       _bPacketReceiving = bPacketReceiving;
@@ -520,13 +550,13 @@ implementation {
 	bPacketReceiving = TRUE;
       }
     }
-   	//trace(DBG_USR1, "delayedRXFIFO 3!\r\n"); 
+    //trace(DBG_USR1, "delayedRXFIFO 3!\r\n"); 
     // JP NOTE: TODO: move readRXFIFO out of atomic context to permit
     // high frequency sampling applications and remove delays on
     // interrupts being processed.  There is a race condition
     // that has not yet been diagnosed when RXFIFO may be interrupted.
     if (!_bPacketReceiving) {
-		//trace(DBG_USR1, "delayedRXFIFO 4!\r\n"); 
+      //trace(DBG_USR1, "delayedRXFIFO 4!\r\n"); 
       if (!call HPLChipconFIFO.readRXFIFO(len,(uint8_t*)rxbufptr)) {
 	atomic bPacketReceiving = FALSE;
 	//trace(DBG_USR1, "delayedRXFIFO 5!\r\n"); 
@@ -561,13 +591,23 @@ implementation {
      // if we're trying to send a message and a FIFOP interrupt occurs
      // and acks are enabled, we need to backoff longer so that we don't
      // interfere with the ACK
+     // XXX: needs work to work... :P
+     //trace(DBG_USR1, "fifopfired\r\n");
+     if (bAckEnable && (stateRadio == PRE_TX_STATE)) {
+       if (call BackoffTimerJiffy.isSet()) {
+         call BackoffTimerJiffy.stop();
+	 setBackoffTimer(getAckBackoff(txbufptr));
+       }
+     }
 
+     //trace(DBG_USR1, "fifopfired2\r\n");
      /** Check for RXFIFO overflow **/     
      if (!TOSH_READ_CC_FIFO_PIN()){
        flushRXFIFO();
        return SUCCESS;
      }
 
+     //trace(DBG_USR1, "fifopfired3\r\n");
      atomic {
 	 if (post delayedRXFIFOtask()) {
 	   call FIFOP.disable();
@@ -597,7 +637,7 @@ implementation {
       currentstate = stateRadio;
     }
 
-	//trace(DBG_USR1, "RXFIFODone!\r\n");
+    //trace(DBG_USR1, "RXFIFODone!\r\n");
     // if a FIFO overflow occurs or if the data length is invalid, flush
     // the RXFIFO to get back to a normal state.
     if ((!TOSH_READ_CC_FIFO_PIN() && !TOSH_READ_CC_FIFOP_PIN()) 
@@ -609,14 +649,33 @@ implementation {
 
     rxbufptr = data;
     pBuf = (PhyPktBuf *)rxbufptr;
-	//trace(DBG_USR1, "RXFIFODone 2!\r\n");
+    //trace(DBG_USR1, "RXFIFODone 2!\r\n");
 
+    // check for an acknowledgement that passes the CRC check
+    if (bAckEnable && (currentstate == POST_TX_STATE) &&
+         ((rxbufptr->fcfhi & 0x07) == CC2420_DEF_FCF_TYPE_ACK) &&
+         (rxbufptr->dsn == currentDSN) &&
+         ((data[length-1] >> 7) == 1)) {
+      atomic {
+	/* MDW 12-Jul-05: Need to set the real radio state here... */
+        stateRadio = POST_TX_ACK_STATE;
+        bPacketReceiving = FALSE;
+      }
+      if (!post PacketSent())
+	sendFailed();
+      //trace(DBG_USR1, "RXFIFODone -1\r\n");
+      return SUCCESS;
+    }
+    if ((rxbufptr->fcfhi & 0x07) == CC2420_DEF_FCF_TYPE_ACK) {
+      return SUCCESS;
+    }
+    //trace(DBG_USR1, "RXFIFODone -2, length=%d (PHY_MAX_PKT_LEN=%d)\r\n", pBuf->hdr.length, PHY_MAX_PKT_LEN);
     if (pBuf->hdr.length > PHY_MAX_PKT_LEN) {
       flushRXFIFO();
       atomic bPacketReceiving = FALSE;
       return SUCCESS;
     }
- 	//trace(DBG_USR1, "RXFIFODone 3!\r\n");
+    //trace(DBG_USR1, "RXFIFODone 3!\r\n");
 
     // if the length is shorter, we have to move the CRC bytes
     pBuf->crc = data[length-1] >> 7;
@@ -629,7 +688,7 @@ implementation {
       }
     }
 
-	//trace(DBG_USR1, "RXFIFODone 4!\r\n");
+    //trace(DBG_USR1, "RXFIFODone 4!\r\n");
 
     if ((!TOSH_READ_CC_FIFO_PIN()) && (!TOSH_READ_CC_FIFOP_PIN())) {
         flushRXFIFO();
@@ -672,6 +731,13 @@ implementation {
 	}
 	return time;
   }
+
+  int16_t getAckBackoff(uint8_t *pkt) {
+  	int16_t time;
+
+	return (getCongestionBackoff(pkt) + CC2420_ACK_DELAY);
+  }
+
 	command result_t BackoffControl.enableBackoff()
 	{
 		atomic flags |= FLAG_TXONCCA;

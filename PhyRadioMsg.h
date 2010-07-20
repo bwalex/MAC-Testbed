@@ -43,7 +43,6 @@
 // Physical-layer header to be put before data payload
 typedef struct {
 	uint8_t length; // length of entire packet
-	uint8_t pad[3]; // padding to 32 bit boundary
 } __attribute__((packed)) PhyHeader;
 
 
