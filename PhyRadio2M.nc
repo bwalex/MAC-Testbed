@@ -173,10 +173,23 @@ implementation {
     LocalAddr = TOS_LOCAL_ADDRESS;
     return call CC2420SplitControl.init();
   }
+	/* Set the CCA mode to '1', refer to datasheet */
+  static inline result_t setCCAMode(int8_t mode)
+  {
+#if 1
+	uint16_t reg;
+	reg = call HPLChipcon.read(CC2420_MDMCTRL0);
+	reg &= ~((uint16_t)(3 << CC2420_MDMCTRL0_CCAMODE));
+	reg |= (mode << CC2420_MDMCTRL0_CCAMODE);
+	return call HPLChipcon.write(CC2420_MDMCTRL0, reg);
+#endif
+	return SUCCESS;
+  }
 
   event result_t CC2420SplitControl.initDone() {
 	//trace(DBG_USR1, "init done!\r\n");
-	call CC2420Control.TuneManual(2480);
+	call CC2420Control.TuneManual(2440);
+	call CC2420Control.SetRFPower(15); //~half power
 	atomic backoff_retries = MAX_SEND_TRIES;
 	atomic def_backoff_us = CC2420_SYMBOL_UNIT * ((call Random.rand() % 0x3F) + 1);
     return signal SplitControl.initDone();
@@ -255,6 +268,8 @@ implementation {
       
       atomic stateRadio  = IDLE_STATE;
     }
+	setCCAMode(3);
+	call CarrierSense.setThreshold(-55); /* in dBm */
     signal SplitControl.startDone();
     return SUCCESS;
   }
@@ -472,6 +487,13 @@ implementation {
 	atomic stateRadio = PRE_TX_STATE;
     tryToSend();
     return SUCCESS;
+  }
+
+  command result_t PhyComm.cancelTxPkt() {
+    if (call BackoffTimerJiffy.isSet()) {
+        call BackoffTimerJiffy.stop();
+	sendFailed();
+    }
   }
 
   command result_t PhyComm.txPkt(void *pkt, uint8_t pkt_sz) {
@@ -827,10 +849,11 @@ implementation {
 	 */
 	command result_t CarrierSense.setThreshold(int8_t thr)
 	{
-		uint16_t reg;
+		uint16_t reg = 0;
 		thr -= RSSI_OFFSET;
-		reg = call HPLChipcon.read(CC2420_RSSI);
-		reg |= (thr << CC2420_RSSI_CCA_THRESH);
+		//reg = call HPLChipcon.read(CC2420_RSSI);
+		//reg &= 0x00FF;
+		reg = (((int16_t)thr) << CC2420_RSSI_CCA_THRESH);
 		return call HPLChipcon.write(CC2420_RSSI, reg);
 	}
 
