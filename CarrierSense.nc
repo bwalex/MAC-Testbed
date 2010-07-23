@@ -25,6 +25,7 @@ interface CarrierSense
 {
 	command result_t start();
 	command result_t setThreshold(int8_t threshold);
+	command result_t setMode(int8_t mode);
 	event result_t channelIdle();
 	event result_t channelBusy();
 }

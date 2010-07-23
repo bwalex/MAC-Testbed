@@ -34,7 +34,8 @@ interface PhyComm
    command result_t txPkt(void* packet, uint8_t length);
    command result_t reTxPkt();
    event result_t txPktDone(void* packet, uint8_t error);
-   
+   command result_t cancelTxPkt();
+
    // packet reception
    event result_t startSymDetected(void* packet);
    event void* rxPktDone(void* packet, uint8_t error);

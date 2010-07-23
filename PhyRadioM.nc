@@ -84,19 +84,6 @@ implementation
 	uint16_t max_backoff_us;
 	uint8_t backoff_retries;
 
-	/* Set the CCA mode to '1', refer to datasheet */
-	static inline result_t setCCAMode()
-	{
-#if 1
-		uint16_t reg;
-		reg = call HPL.read(CC2420_MDMCTRL0);
-		reg |= (3 << CC2420_MDMCTRL0_CCAMODE);
-		call CarrierSense.setThreshold(-40);
-		return call HPL.write(CC2420_MDMCTRL0, reg);
-#endif
-		return SUCCESS;
-	}
-
 	/* Flush the RXFIFO (twice) and clear the receive flag */
 	static inline void flushRXFIFO() {
 		/* disable interrupts while we flush */
@@ -191,7 +178,6 @@ implementation
 			/* enable SFD capture (for RX at this point) */
 			call SFD.enableCapture(TRUE);
 			/* set the default CCA mode */
-			setCCAMode();
 			atomic {
 				state = STATE_IDLE;
 			}
@@ -492,6 +478,11 @@ set_backoff:
 		atomic state = STATE_TRANSMITTING_PRE;
 		trace(DBG_USR1, "sendPkt() calling from PhyComm.reTxPkt\r\n");
 		sendpkt();
+	}
+
+	command result_t PhyComm.cancelTxPkt() {
+		/* this phy cannot cancel a pkt tx */
+		return FAIL;
 	}
 
 	/* Command to transmit a single packet */
@@ -884,12 +875,22 @@ set_backoff:
 	 */
 	command result_t CarrierSense.setThreshold(int8_t thr)
 	{
-		uint16_t reg;
+		uint16_t reg = 0;
 		thr -= RSSI_OFFSET;
-		reg = call HPL.read(CC2420_RSSI);
-		reg |= (thr << CC2420_RSSI_CCA_THRESH);
+		reg = (((int16_t)thr) << CC2420_RSSI_CCA_THRESH);
 		return call HPL.write(CC2420_RSSI, reg);
 	}
+
+	command result_t CarrierSense.setMode(int8_t mode)
+	{
+		uint16_t reg;
+
+		reg = call HPL.read(CC2420_MDMCTRL0);
+		reg &= ~((uint16_t)(3 << CC2420_MDMCTRL0_CCAMODE));
+		reg |= (mode << CC2420_MDMCTRL0_CCAMODE);
+		return call HPL.write(CC2420_MDMCTRL0, reg);
+	}
+
 
 	default event result_t CarrierSense.channelIdle()
 	{

@@ -32,6 +32,7 @@ module PhyRadio2M
 implementation {
 #include "PhyRadioMsg.h"
 #include "CSMAMsg.h"
+
   enum {
     DISABLED_STATE = 0,
     DISABLED_STATE_STARTTASK,
@@ -173,18 +174,6 @@ implementation {
     LocalAddr = TOS_LOCAL_ADDRESS;
     return call CC2420SplitControl.init();
   }
-	/* Set the CCA mode to '1', refer to datasheet */
-  static inline result_t setCCAMode(int8_t mode)
-  {
-#if 1
-	uint16_t reg;
-	reg = call HPLChipcon.read(CC2420_MDMCTRL0);
-	reg &= ~((uint16_t)(3 << CC2420_MDMCTRL0_CCAMODE));
-	reg |= (mode << CC2420_MDMCTRL0_CCAMODE);
-	return call HPLChipcon.write(CC2420_MDMCTRL0, reg);
-#endif
-	return SUCCESS;
-  }
 
   event result_t CC2420SplitControl.initDone() {
 	//trace(DBG_USR1, "init done!\r\n");
@@ -235,13 +224,17 @@ implementation {
     uint8_t chkstateRadio;
 
     atomic chkstateRadio = stateRadio;
-    //atomic bAckEnable = FALSE;
+
+#if CSMA_NO_ACK == 1
+    atomic bAckEnable = FALSE;
+    call CC2420Control.disableAddrDecode();
+    call CC2420Control.disableAutoAck();
+#else
     atomic bAckEnable = TRUE;
     call CC2420Control.enableAddrDecode();
     call CC2420Control.enableAutoAck();
-    //call CC2420Control.setShortAddress(TOS_LOCAL_ADDRESS);
-    //call CC2420Control.disableAddrDecode();
-    //call CC2420Control.disableAutoAck();
+#endif
+    
     if (chkstateRadio == DISABLED_STATE) {
       atomic {
 	stateRadio = WARMUP_STATE;
@@ -268,8 +261,10 @@ implementation {
       
       atomic stateRadio  = IDLE_STATE;
     }
-	setCCAMode(3);
-	call CarrierSense.setThreshold(-55); /* in dBm */
+
+    call CarrierSense.setMode(3);
+    call CarrierSense.setThreshold(-55); /* in dBm */
+
     signal SplitControl.startDone();
     return SUCCESS;
   }
@@ -494,6 +489,7 @@ implementation {
         call BackoffTimerJiffy.stop();
 	sendFailed();
     }
+    return SUCCESS;
   }
 
   command result_t PhyComm.txPkt(void *pkt, uint8_t pkt_sz) {
@@ -851,10 +847,18 @@ implementation {
 	{
 		uint16_t reg = 0;
 		thr -= RSSI_OFFSET;
-		//reg = call HPLChipcon.read(CC2420_RSSI);
-		//reg &= 0x00FF;
 		reg = (((int16_t)thr) << CC2420_RSSI_CCA_THRESH);
 		return call HPLChipcon.write(CC2420_RSSI, reg);
+	}
+
+	command result_t CarrierSense.setMode(int8_t mode)
+	{
+		uint16_t reg;
+
+		reg = call HPLChipcon.read(CC2420_MDMCTRL0);
+		reg &= ~((uint16_t)(3 << CC2420_MDMCTRL0_CCAMODE));
+		reg |= (mode << CC2420_MDMCTRL0_CCAMODE);
+		return call HPLChipcon.write(CC2420_MDMCTRL0, reg);
 	}
 
 	default event result_t CarrierSense.channelIdle()
