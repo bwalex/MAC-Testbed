@@ -26,11 +26,13 @@
 
 module PollHeadM
 {
-	provides {
+	provides
+	{
 		interface SplitControl;
 		interface PollHeadComm;
 	}
-	uses {
+	uses
+	{
 		interface SplitControl as PhyControl;
 		interface PhyState;
 		//interface CarrierSense;
@@ -39,12 +41,12 @@ module PollHeadM
 	}
 }
 
-implementation
-{
+implementation {
 #include "PollMsg.h"
-#define BEACON_INTERVAL	5500 /* every 5.5s */
+#define BEACON_INTERVAL	5500	/* every 5.5s */
 
-	enum {
+	enum
+	{
 		STATE_SLEEP,
 		STATE_IDLE,
 		STATE_PRE_TX,
@@ -55,7 +57,8 @@ implementation
 		STATE_TX_DONE
 	};
 
-	enum {
+	enum
+	{
 		RADIO_SLEEP,
 		RADIO_IDLE,
 		RADIO_RX,
@@ -66,7 +69,7 @@ implementation
 	uint32_t sleep_interval;
 	uint8_t state;
 	uint8_t radioState;
-	uint8_t	flags;
+	uint8_t flags;
 	MACPkt txPkt;
 	MACHeader *pkt;
 	MACHeader *rxPkt;
@@ -86,7 +89,9 @@ implementation
 		call PhyState.idle();
 	}
 
-	default event result_t PollHeadComm.requestDataDone(uint8_t id, void *data, uint8_t error)
+	default event result_t PollHeadComm.requestDataDone(uint8_t id,
+							    void *data,
+							    uint8_t error)
 	{
 		return SUCCESS;
 	}
@@ -94,7 +99,8 @@ implementation
 	/* Fail a data request and get us back to idle */
 	task void rqDataFail()
 	{
-		signal PollHeadComm.requestDataDone(rxPkt->src_id, (void *)rxPkt, 1);
+		signal PollHeadComm.requestDataDone(rxPkt->src_id,
+						    (void *) rxPkt, 1);
 		atomic state = STATE_IDLE;
 	}
 
@@ -104,7 +110,8 @@ implementation
 	 */
 	task void rqDataDone()
 	{
-		signal PollHeadComm.requestDataDone(rxPkt->src_id, (void *)rxPkt, 0);
+		signal PollHeadComm.requestDataDone(rxPkt->src_id,
+						    (void *) rxPkt, 0);
 		atomic state = STATE_IDLE;
 	}
 
@@ -113,7 +120,7 @@ implementation
 	{
 		MACHeader *mh;
 
-		atomic mh = (MACHeader *)&txPkt;
+		atomic mh = (MACHeader *) & txPkt;
 		atomic mh->dest_id = node_id;
 		atomic mh->src_id = TOS_LOCAL_ADDRESS;
 		atomic mh->type = POLL_ACK;
@@ -128,19 +135,19 @@ implementation
 	void sendBeacon()
 	{
 		MACHeader *mh;
-		MACPkt	*mp;
+		MACPkt *mp;
 
 		trace(DBG_USR1, "beacon timer fired, sending beacon\r\n");
 #if 0
 		atomic {
-			mh = (MACHeader *)&txPkt;
-			mp = (MACPkt *)&txPkt;
+			mh = (MACHeader *) & txPkt;
+			mp = (MACPkt *) & txPkt;
 			mh->dest_id = POLL_BROADCAST_ID;
 			mh->src_id = TOS_LOCAL_ADDRESS;
 			mh->type = POLL_BEACON;
 			mp->sleep_jf = sleep_interval;
 		}
-		
+
 		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL)
 			trace(DBG_USR1, "Failed to send beacon :(\r\n");
 #endif
@@ -154,17 +161,17 @@ implementation
 	command result_t PollHeadComm.sendSampleStart()
 	{
 		MACHeader *mh;
-		MACPkt	*mp;
+		MACPkt *mp;
 
 #if 0
 		atomic {
-			mh = (MACHeader *)&txPkt;
-			mp = (MACPkt *)&txPkt;
+			mh = (MACHeader *) & txPkt;
+			mp = (MACPkt *) & txPkt;
 			mh->dest_id = POLL_BROADCAST_ID;
 			mh->src_id = TOS_LOCAL_ADDRESS;
 			mh->type = POLL_SAMPLE;
 		}
-	
+
 		if ((call PhyComm.txPkt(&txPkt, sizeof(txPkt))) == FAIL) {
 			return SUCCESS;
 			//trace(DBG_USR1, "Failed to send sampleStart signal :(\r\n");
@@ -218,7 +225,7 @@ implementation
 		}
 
 		atomic radioState = RADIO_IDLE;
-			
+
 		switch (chkState) {
 		case STATE_REQ_TX:
 			if (call PhyComm.txPkt(pkt, pkt_len) == FAIL)
@@ -255,8 +262,7 @@ implementation
 		return SUCCESS;
 	}
 
-	default event result_t SplitControl.initDone()
-	{
+	default event result_t SplitControl.initDone() {
 		return SUCCESS;
 	}
 
@@ -266,8 +272,7 @@ implementation
 		return call PhyControl.start();
 	}
 
-	default event result_t SplitControl.startDone()
-	{
+	default event result_t SplitControl.startDone() {
 		return SUCCESS;
 	}
 
@@ -292,8 +297,7 @@ implementation
 		return SUCCESS;
 	}
 
-	default event result_t SplitControl.stopDone()
-	{
+	default event result_t SplitControl.stopDone() {
 		return SUCCESS;
 	}
 
@@ -313,7 +317,8 @@ implementation
 	 * radio if needed. The startDone event will then send the request for
 	 * us, otherwise, if we were not sleeping, we send the request.
 	 */
-	command result_t PollHeadComm.requestData(uint8_t u_node_id, void *data, uint8_t length)
+	command result_t PollHeadComm.requestData(uint8_t u_node_id,
+						  void *data, uint8_t length)
 	{
 		uint8_t chkState;
 		result_t ret;
@@ -353,7 +358,7 @@ implementation
 	event result_t PhyComm.txPktDone(void *data, uint8_t error)
 	{
 		atomic {
-			switch(state) {
+			switch (state) {
 			case STATE_REQ_TX:
 				if (error) {
 					post rqDataFail();
@@ -402,16 +407,18 @@ implementation
 		/*
 		 * If we are not waiting for data or discovery, drop the packet
 		 */
-		if ((chkState != STATE_DATA_WAIT) && (chkState != STATE_DISCOVERY_WAIT))
+		if ((chkState != STATE_DATA_WAIT)
+		    && (chkState != STATE_DISCOVERY_WAIT))
 			return data;
-		
+
 		rxPkt = data;
 		/*
 		 * If we are in data wait state but the received packet is not
 		 * of the data type or an error occured, post the data request
 		 * fail task.
 		 */
-		if ((chkState == STATE_DATA_WAIT) && ((rxPkt->type != POLL_DATA) || (error))) {
+		if ((chkState == STATE_DATA_WAIT)
+		    && ((rxPkt->type != POLL_DATA) || (error))) {
 			post rqDataFail();
 			return data;
 		}
@@ -421,7 +428,8 @@ implementation
 		 * node we haven't requested any data from recently, just drop
 		 * it.
 		 */
-		if ((chkState == STATE_DATA_WAIT) && (rxPkt->src_id != node_id))
+		if ((chkState == STATE_DATA_WAIT)
+		    && (rxPkt->src_id != node_id))
 			return data;
 
 		switch (rxPkt->type) {

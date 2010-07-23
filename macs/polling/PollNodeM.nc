@@ -26,11 +26,13 @@
 
 module PollNodeM
 {
-	provides {
+	provides
+	{
 		interface SplitControl;
 		interface PollNodeComm;
 	}
-	uses {
+	uses
+	{
 		interface SplitControl as PhyControl;
 		interface PhyState;
 		//interface CarrierSense;
@@ -42,11 +44,11 @@ module PollNodeM
 	}
 }
 
-implementation
-{
+implementation {
 #include "PollMsg.h"
 
-	enum {
+	enum
+	{
 		STATE_WAKEUP = 0,
 		STATE_SLEEP,
 		STATE_IDLE,
@@ -55,7 +57,8 @@ implementation
 		STATE_WAIT_ACK,
 	};
 
-	enum {
+	enum
+	{
 		RADIO_SLEEP,
 		RADIO_IDLE,
 		RADIO_RX,
@@ -66,7 +69,7 @@ implementation
 	uint32_t sleep_interval;
 	uint8_t state;
 	uint8_t radioState;
-	uint8_t	flags;
+	uint8_t flags;
 	MACHeader txPkt;
 	MACHeader *pkt;
 	MACHeader *rxPkt;
@@ -86,16 +89,18 @@ implementation
 		//trace(DBG_USR1, "Timer fired (precision): Timestamp difference: %d\r\n", now_ts - timestamp);
 		atomic {
 			if (radioState != RADIO_SLEEP) {
-				trace(DBG_USR1, "wakeup() called, but radioState != RADIO_SLEEP, = %d\r\n", radioState);
+				trace(DBG_USR1,
+				      "wakeup() called, but radioState != RADIO_SLEEP, = %d\r\n",
+				      radioState);
 				ret = 1;
 			}
 		}
 
 		if (ret)
 			return;
-			
+
 		atomic state = STATE_WAKEUP;
-		
+
 		call PhyState.idle();
 	}
 
@@ -104,7 +109,7 @@ implementation
 	 * (see above).
 	 */
 	async event result_t Timestamp.alarmFired(uint32_t val)
-	{			
+	{
 		wakeup();
 		return SUCCESS;
 	}
@@ -185,8 +190,7 @@ implementation
 		return SUCCESS;
 	}
 
-	default event result_t SplitControl.initDone()
-	{
+	default event result_t SplitControl.initDone() {
 		return SUCCESS;
 	}
 
@@ -199,8 +203,7 @@ implementation
 		return call PhyControl.start();
 	}
 
-	default event result_t SplitControl.startDone()
-	{
+	default event result_t SplitControl.startDone() {
 		return SUCCESS;
 	}
 
@@ -220,8 +223,7 @@ implementation
 		return SUCCESS;
 	}
 
-	default event result_t SplitControl.stopDone()
-	{
+	default event result_t SplitControl.stopDone() {
 		atomic {
 			if (state == STATE_WAKEUP) {
 				/*
@@ -245,8 +247,7 @@ implementation
 		return SUCCESS;
 	}
 
-	default event result_t PollNodeComm.dataTxFailed()
-	{
+	default event result_t PollNodeComm.dataTxFailed() {
 		return SUCCESS;
 	}
 
@@ -258,7 +259,7 @@ implementation
 	{
 		uint8_t chkState;
 		atomic chkState = state;
-		
+
 		/* If no data was requested, fail immediately */
 		if (chkState != STATE_DATA_REQ)
 			return FAIL;
@@ -292,7 +293,7 @@ implementation
 	 * A packet has been successfully received. Check that the packet is
 	 * intended for us and process accordingly.
 	 */
-	event void* PhyComm.rxPktDone(void *data, uint8_t error)
+	event void *PhyComm.rxPktDone(void *data, uint8_t error)
 	{
 		MACPkt *pMacPkt;
 		uint8_t chkState;
@@ -300,7 +301,7 @@ implementation
 
 		if (error)
 			return data;
-	
+
 		atomic rxPkt = data;
 		/*
 		 * PFLAGS+=-DMY_ADDRESS=N make imote2  (to set
@@ -311,7 +312,8 @@ implementation
 		 * If the packet isn't a broadcast and not intended for us
 		 * either, we just drop it.
 		 */
-		if ((rxPkt->dest_id != TOS_LOCAL_ADDRESS) && (rxPkt->dest_id != POLL_BROADCAST_ID))
+		if ((rxPkt->dest_id != TOS_LOCAL_ADDRESS)
+		    && (rxPkt->dest_id != POLL_BROADCAST_ID))
 			return data;
 		//trace(DBG_USR1, "rxPktDone() marker 2, chkState = %d\r\n", chkState);
 
@@ -329,16 +331,16 @@ implementation
 		 * If the packet is a beacon, extract relevant information.
 		 */
 		if (rxPkt->type == POLL_BEACON) {
-			pMacPkt = (MACPkt *)data;
+			pMacPkt = (MACPkt *) data;
 			atomic sleep_interval = pMacPkt->sleep_jf;
 			//trace(DBG_USR1, "beacon received, setting sleep interval to %d jiffies\r\n", pMacPkt->sleep_jf);
 		}
 		if (chkState == STATE_IDLE) {
-			switch(rxPkt->type) {
-			/*
-			 * If we are idle and we received a data request, signal
-			 * upper layer and change our state accordingly.
-			 */
+			switch (rxPkt->type) {
+				/*
+				 * If we are idle and we received a data request, signal
+				 * upper layer and change our state accordingly.
+				 */
 			case POLL_REQ:
 				//trace(DBG_USR1, "rxPktDone() marker 4\r\n");
 				atomic state = STATE_DATA_REQ;
@@ -357,7 +359,7 @@ implementation
 			if (rxPkt->type != POLL_ACK)
 				return data;
 			else {
-				sleep(sleep_interval); /* XXX: maybe should sleep after ackReceived() callback */
+				sleep(sleep_interval);	/* XXX: maybe should sleep after ackReceived() callback */
 				signal PollNodeComm.ackReceived(data);
 				//sleep(sleep_interval);
 			}
@@ -373,7 +375,7 @@ implementation
 
 		atomic {
 			//trace(DBG_USR1, "txPktDone called with state = %d\r\n", state);
-			switch(state) {
+			switch (state) {
 			case STATE_DATA_TX:
 				if (error) {
 					/* XXX: retry first? */

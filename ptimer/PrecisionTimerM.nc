@@ -65,44 +65,49 @@
 
 includes trace;
 
-module PrecisionTimerM {
-  provides interface StdControl;
-  provides interface PrecisionTimer[uint8_t id];
-  uses interface PXA27XInterrupt as OSTIrq1;
-  uses interface PXA27XInterrupt as OSTIrq2;
-  uses interface PXA27XInterrupt as OSTIrq3;
+module PrecisionTimerM
+{
+	provides interface StdControl;
+	provides interface PrecisionTimer[uint8_t id];
+	uses interface PXA27XInterrupt as OSTIrq1;
+	uses interface PXA27XInterrupt as OSTIrq2;
+	uses interface PXA27XInterrupt as OSTIrq3;
 }
 
 
 implementation
 {
-   command result_t StdControl.init() {
-	  call OSTIrq1.allocate();
-     	  call OSTIrq2.allocate();
-	  call OSTIrq3.allocate();
-	  OSCR0 = 0x1;
-      return SUCCESS;
-   }
+	command result_t StdControl.init()
+	{
+		call OSTIrq1.allocate();
+		call OSTIrq2.allocate();
+		call OSTIrq3.allocate();
+		OSCR0 = 0x1;
+		return SUCCESS;
+	}
 
-   command result_t StdControl.start() {
-      return SUCCESS;
-   }
+	command result_t StdControl.start()
+	{
+		return SUCCESS;
+	}
 
-   command result_t StdControl.stop() {
-      return SUCCESS;
-   }
+	command result_t StdControl.stop()
+	{
+		return SUCCESS;
+	}
 
-   async command uint32_t PrecisionTimer.getTime32[uint8_t id]() {
-  
-      uint32_t time;
-      atomic {
-         time = OSCR0;
-      }
-      return time;
-   }
+	async command uint32_t PrecisionTimer.getTime32[uint8_t id] ()
+	{
 
-   async command result_t PrecisionTimer.clearAlarm[uint8_t id]()
-   {
+		uint32_t time;
+		atomic {
+			time = OSCR0;
+		}
+		return time;
+	}
+
+	async command result_t PrecisionTimer.clearAlarm[uint8_t id] ()
+	{
 		if ((id < 1) || (id > 3))
 			return FAIL;
 
@@ -124,11 +129,12 @@ implementation
 				/* NOTREACHED */
 			}
 		}
-		return SUCCESS;	
-   }
+		return SUCCESS;
+	}
 
-   async command result_t PrecisionTimer.setAlarm[uint8_t id](uint32_t val)
-   {
+	async command result_t PrecisionTimer.
+	    setAlarm[uint8_t id] (uint32_t val)
+	{
 		if ((id < 1) || (id > 3))
 			return FAIL;
 
@@ -154,40 +160,52 @@ implementation
 			}
 		}
 		return SUCCESS;
-   }
+	}
 
-   async event void OSTIrq1.fired() {
-   		uint32_t val;
+	async event void OSTIrq1.fired()
+	{
+		uint32_t val;
 		if (OSSR & OIER_E1) {
 			OSSR |= OIER_E1;
 			OIER &= ~(OIER_E1);
-			atomic { val = OSMR1; }
-			signal PrecisionTimer.alarmFired[1](val);
+			atomic {
+				val = OSMR1;
+			}
+			signal PrecisionTimer.alarmFired[1] (val);
 			call OSTIrq1.disable();
 		}
-   }
+	}
 
-   async event void OSTIrq2.fired() {
-   		uint32_t val;
+	async event void OSTIrq2.fired()
+	{
+		uint32_t val;
 		if (OSSR & OIER_E2) {
 			OSSR |= OIER_E2;
 			OIER &= ~(OIER_E2);
-			atomic { val = OSMR2; }
-			signal PrecisionTimer.alarmFired[2](val);
+			atomic {
+				val = OSMR2;
+			}
+			signal PrecisionTimer.alarmFired[2] (val);
 			call OSTIrq2.disable();
 		}
 	}
 
-   async event void OSTIrq3.fired() {
-   		uint32_t val;
+	async event void OSTIrq3.fired()
+	{
+		uint32_t val;
 		if (OSSR & OIER_E3) {
 			OSSR |= OIER_E3;
 			OIER &= ~(OIER_E3);
-			atomic { val = OSMR3; }
-			signal PrecisionTimer.alarmFired[3](val);
+			atomic {
+				val = OSMR3;
+			}
+			signal PrecisionTimer.alarmFired[3] (val);
 			call OSTIrq3.disable();
 		}
 	}
 
-   default async event result_t PrecisionTimer.alarmFired[uint8_t id](uint32_t val) {return SUCCESS;}
+	default async event result_t PrecisionTimer.
+	    alarmFired[uint8_t id] (uint32_t val) {
+		return SUCCESS;
+	}
 }
