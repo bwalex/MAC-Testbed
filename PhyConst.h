@@ -38,7 +38,7 @@
 #ifndef PHY_CONST
 #define PHY_CONST
 
-#define BANDWIDTH 38
+#define BANDWIDTH 39
 #define LISTEN_RATE 19
 #define PRE_PKT_BYTES 5
 #define ENCODE_RATIO 1
